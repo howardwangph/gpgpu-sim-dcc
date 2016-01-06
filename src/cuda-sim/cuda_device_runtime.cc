@@ -904,20 +904,37 @@ void launch_one_device_kernel(bool no_more_kernel) {
 void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info * thread, const function_info * target_func) {
    DEV_RUNTIME_REPORT("Calling cudaDeviceSynchronize");
    unsigned parent_block_idx = thread->get_block_idx();
+   /* Parent-child dependency */
+   thread->get_kernel().block_state[parent_block_idx].thread.reset(thread->get_thread_idx());
+   DEV_RUNTIME_REPORT("Reset block state for block " << parent_block_idx << " thread " << thread->get_thread_idx() /*<< " bitset " << thread->get_kernel().block_state[parent_block_idx].thread.to_ulong()*/);
    if(!g_dyn_child_thread_consolidation){
       //cdp: context switch current CTA
-      if (thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
+      DEV_RUNTIME_REPORT("CDP: mark parent kernel " << thread->get_kernel().get_uid() << " block " << parent_block_idx << " for context-switch.");
+      if (!thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
          thread->get_kernel().block_state[parent_block_idx].time_stamp_switching = 0;
          thread->get_kernel().block_state[parent_block_idx].switched = 1;
          thread->get_kernel().block_state[parent_block_idx].preempted = 0;
       }
    } else {
       //DCC: register a barrier (borrow from the data structure of context switch) and blocks the whole CTA
-      if (thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
+      DEV_RUNTIME_REPORT("DCC: mark parent kernel " << thread->get_kernel().get_uid() << " block " << parent_block_idx << " as stalled.");
+      if (!thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
          thread->get_kernel().block_state[parent_block_idx].switched = 1;
       }
    }
    thread->get_kernel().parent_child_dependency = true;
+   
+   //copy the buffer address to retval0
+   const operand_info &actual_return_op = pI->operand_lookup(0); //retval0
+   const symbol *formal_return = target_func->get_return_var(); //void *
+   unsigned int return_size = formal_return->get_size_in_bytes();
+   DEV_RUNTIME_REPORT("cudaDeviceSynchronize return value has size of " << return_size);
+   assert(actual_return_op.is_param_local());
+   assert(actual_return_op.get_symbol()->get_size_in_bytes() == return_size 
+     && return_size == sizeof(cudaError_t));
+   cudaError_t error = cudaSuccess;
+   addr_t ret_param_addr = actual_return_op.get_symbol()->get_address();
+   thread->m_local_mem->write(ret_param_addr, return_size, &error, NULL, NULL);
 }
 
 void launch_all_device_kernels() {
