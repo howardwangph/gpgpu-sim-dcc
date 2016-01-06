@@ -264,13 +264,17 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
 {
    bool continous_offset = false;
    memory_space *mspace1, *mspace2, *new_mspace;
-   mspace1 = kd_entry_1->kernel_grid->get_param_memory(-1);
-   mspace2 = kd_entry_2->kernel_grid->get_param_memory(-1);
+   std::map<unsigned int, memory_space *>::iterator it;
+   it = kd_entry_1->kernel_grid->m_param_mem_map.begin();
+   mspace1 = it->second;
+   it = kd_entry_2->kernel_grid->m_param_mem_map.begin();
+   mspace2 = it->second;
    unsigned int total_thread_1, total_thread_2;
    unsigned int offset_a_1, offset_a_2, offset_b_1, offset_b_2;
    unsigned int total_thread_sum, total_thread_offset;
    unsigned int kernel_param_size;
    unsigned int new_offset_b_1, new_offset_b_2;
+   unsigned int num_blocks, thread_per_block;
    dim3 gDim;
 
    remaining = false;
@@ -320,8 +324,8 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       mspace1->read((size_t)24, 4, &offset_b_1);
       mspace2->read((size_t)24, 4, &offset_b_2);
       
-      assert( kd_entry_1->thread_count == total_thread_1 );
-      assert( kd_entry_2->thread_count == total_thread_2 );
+//      assert( kd_entry_1->thread_count == total_thread_1 );
+//      assert( kd_entry_2->thread_count == total_thread_2 );
 
       if( offset_a_1 + total_thread_1 == offset_a_2 ){
          DEV_RUNTIME_REPORT("DCC: JOIN continous -> child1 (" << offset_a_1 << ", " << offset_b_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << offset_b_2 << ", " << total_thread_2 << ")");
@@ -380,7 +384,6 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
    }
 
    unsigned remaining_count = 0;
-   std::map<unsigned int, memory_space *>::iterator it;
 
    if(continous_offset || ForceMerge){
       //child kernel 2 can be catenated after child kernel 1
@@ -388,37 +391,37 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       // adjust thread count
       total_thread_sum = total_thread_1 + total_thread_2;
       if( (target_size != -1) && (total_thread_sum > target_size) ){
-         if (kd_entry_2->kernel_grid->m_param_mem_map.size() > 1) //if the latter kd entry is composed of more than 1 child kernel, find another one
-            return false;
+//         if (kd_entry_2->kernel_grid->m_param_mem_map.size() > 1) //if the latter kd entry is composed of more than 1 child kernel, find another one
+//            return false;
          remaining = true;
          remaining_count = total_thread_sum - target_size; //record the number of threads that should be cut-off
          new_mspace = new memory_space_impl<256>("param", 256);
          //copy the kernel parameters of the splitting kernel into a new memory space
-         it = kd_entry_2->kernel_grid->m_param_mem_map.begin();
-         for(unsigned n = 0; n < kernel_param_size; n += 4) {
-            unsigned int oneword;
-            it->second->read((size_t) n, 4, &oneword);
-            new_mspace->write((size_t) n, 4, &oneword, NULL, NULL); 
-         }
+//         it = kd_entry_2->kernel_grid->m_param_mem_map.begin();
+//         for(unsigned n = 0; n < kernel_param_size; n += 4) {
+//            unsigned int oneword;
+//            it->second->read((size_t) n, 4, &oneword);
+//            new_mspace->write((size_t) n, 4, &oneword, NULL, NULL); 
+//         }
       }
       total_thread_sum -= remaining_count;
       kd_entry_1->thread_count = total_thread_sum;
       mspace1->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
-      mspace2->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
       if(remaining){
-         new_mspace->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
          kd_entry_2->thread_count = remaining_count;
          gDim = kd_entry_2->kernel_grid->get_grid_dim(-1);
-         gDim.x = 1;
+         thread_per_block = kd_entry_1->kernel_grid->threads_per_cta();
+         num_blocks = (remaining_count + thread_per_block - 1) / thread_per_block;
+         gDim.x = num_blocks;
          kd_entry_2->kernel_grid->set_grid_dim(gDim);
-         DEV_RUNTIME_REPORT("Merge block with " << total_thread_2 << " threads into block with " << total_thread_1 << " under target block size " << total_thread_sum << ", split.");
+         DEV_RUNTIME_REPORT("Merge kernel " << kd_entry_2->kernel_grid->get_uid() << "(" << total_thread_2 << " threads) into kernel " << kd_entry_1->kernel_grid->get_uid() << "(" << total_thread_1 << " threads), target kernel size " << target_size << ", kernel "<< kd_entry_2->kernel_grid->get_uid() << " has " << remaining_count << " threads remaining.");
       }
       
 
       // adjust grid dimension
       gDim = kd_entry_1->kernel_grid->get_grid_dim(-1);
-      unsigned int thread_per_block = kd_entry_1->kernel_grid->threads_per_cta();
-      unsigned int num_blocks = (total_thread_sum + thread_per_block - 1) / thread_per_block;
+      thread_per_block = kd_entry_1->kernel_grid->threads_per_cta();
+      num_blocks = (total_thread_sum + thread_per_block - 1) / thread_per_block;
       gDim.x = num_blocks;
       kd_entry_1->kernel_grid->set_grid_dim(gDim);
 
@@ -427,55 +430,97 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
 //      DEV_RUNTIME_REPORT("DCC: merge child kernel " << kd_entry_2->kernel_grid->get_uid() << " into child kernel " << kd_entry_1->kernel_grid->get_uid() << ", new threads " << total_thread_sum << ", new blocks " << num_blocks);
 
       // merge parameter buffer
+      bool boundary = false, split = false;
+      unsigned offset;
+      unsigned split_size = 0;
+      std::map<unsigned int, memory_space *> new_map;
       for( it = kd_entry_2->kernel_grid->m_param_mem_map.begin(); it != kd_entry_2->kernel_grid->m_param_mem_map.end(); it++ ){
-         unsigned int offset = it->first + total_thread_1;
-         kd_entry_1->kernel_grid->m_param_mem_map[offset] = it->second;
-         it->second->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
+         if (!split){
+            offset = it->first + total_thread_1;
+            if( target_size != -1 && offset > target_size ) { //boundary parameter buffer -> duplicate
+               boundary = true;
+               for(unsigned n = 0; n < kernel_param_size; n += 4) {
+                  unsigned int oneword;
+                  it->second->read((size_t) n, 4, &oneword);
+                  new_mspace->write((size_t) n, 4, &oneword, NULL, NULL); 
+               }
+               split_size = offset - target_size;
+               DEV_RUNTIME_REPORT("DCC pre-split: found boundary, set new param mem offset at " << split_size);
+               new_mspace->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
+               new_map[split_size] = new_mspace;
+            }
+            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
+            it->second->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
+            kd_entry_1->kernel_grid->m_param_mem_map[offset] = it->second;
+         } else { // splitted -> modifying parameter memory maps
+            DEV_RUNTIME_REPORT("DCC post-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << (it->first-(total_thread_2 - remaining_count)) );
+            it->second->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
+            new_map[it->first-(total_thread_2 - remaining_count)] = it->second;
+         }
+
          switch(g_app_name){
          case BFS:
             it->second->read((size_t) 0, 4, &offset_b_1);
             it->second->read((size_t)24, 4, &offset_b_2);
-            if(remaining){
+            if(remaining && !split && boundary ){
                new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                new_offset_b_2 = offset_b_2 + total_thread_2 - remaining_count;
                new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
                new_mspace->write((size_t)24, 4, &new_offset_b_2, NULL, NULL);
             }
-            offset_b_1 -= total_thread_1;
+            if(!split){
+               offset_b_1 -= total_thread_1;
+               offset_b_2 -= total_thread_1;
+            } else {
+               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_b_2 += (total_thread_2 - remaining_count);
+            }
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
-            offset_b_2 -= total_thread_1;
             it->second->write((size_t)24, 4, &offset_b_2, NULL, NULL);
             break;
          case AMR:
             it->second->read((size_t)36, 4, &offset_b_1);
-            if(remaining){
+            if(remaining && !split && boundary){
                new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                new_mspace->write((size_t)36, 4, &new_offset_b_1, NULL, NULL);
             }
-            offset_b_1 -= total_thread_1;
+            if(!split){
+               offset_b_1 -= total_thread_1;
+            }else{
+               offset_b_1 += (total_thread_2 - remaining_count);
+            }
             it->second->write((size_t)36, 4, &offset_b_1, NULL, NULL);
             break;
          case JOIN:
             it->second->read((size_t)16, 4, &offset_b_1);
             it->second->read((size_t)24, 4, &offset_b_2);
-            if(remaining){
+            if(remaining && !split && boundary){
                new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                new_offset_b_2 = offset_b_2 + total_thread_2 - remaining_count;
                new_mspace->write((size_t)16, 4, &new_offset_b_1, NULL, NULL);
                new_mspace->write((size_t)24, 4, &new_offset_b_2, NULL, NULL);
             }
-            offset_b_1 -= total_thread_1;
+            if(!split){
+               offset_b_1 -= total_thread_1;
+               offset_b_2 -= total_thread_1;
+            } else {
+               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_b_2 += (total_thread_2 - remaining_count);
+            }
             it->second->write((size_t)16, 4, &offset_b_1, NULL, NULL);
-            offset_b_2 -= total_thread_1;
             it->second->write((size_t)24, 4, &offset_b_2, NULL, NULL);
             break;
          case SSSP:
             it->second->read((size_t) 0, 4, &offset_b_1);
-            if(remaining){
+            if(remaining && !split && boundary){
                new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
             }
-            offset_b_1 -= total_thread_1;
+            if(!split){
+               offset_b_1 -= total_thread_1;
+            }else{
+               offset_b_1 += (total_thread_2 - remaining_count);
+            }
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case MST:
@@ -488,11 +533,15 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             break;
          case BFS_RODINIA:
             it->second->read((size_t) 8, 4, &offset_b_1);
-            if(remaining){
+            if(remaining && !split && boundary){
                new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                new_mspace->write((size_t) 8, 4, &new_offset_b_1, NULL, NULL);
             }
-            offset_b_1 -= total_thread_1;
+            if(!split){
+               offset_b_1 -= total_thread_1;
+            }else{
+               offset_b_1 += (total_thread_2 - remaining_count);
+            }
             it->second->write((size_t) 8, 4, &offset_b_1, NULL, NULL);
             break;
          default:
@@ -500,7 +549,26 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             assert(0);
             break;
          }
-         DEV_RUNTIME_REPORT("DCC: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
+
+         if(!split){
+//            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
+            //unsigned tmp_key = it->first;
+            //it--;
+            //kd_entry_2->kernel_grid->m_param_mem_map.erase(tmp_key);
+            if(boundary){
+               split = true;
+            }
+         }
+      }
+
+      if(split){
+         //new_map[split_size] = new_mspace;
+         kd_entry_2->kernel_grid->m_param_mem_map.clear();
+         for(it=new_map.begin(); it!=new_map.end(); it++){
+            kd_entry_2->kernel_grid->m_param_mem_map[it->first] = it->second;
+            DEV_RUNTIME_REPORT("DCC post-split: copy param mem map at offset " << it->first << " back to kernel " << kd_entry_2->kernel_grid->get_uid());
+         }
+         kd_entry_2->kernel_grid->set_param_mem(new_mspace);
       }
 
       /*/ set new kernel as candidate
@@ -524,9 +592,9 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             kd_entry_1->kernel_grid->add_parent(kd_entry_2->kernel_grid->get_parent(), *mpt_it);
          }
          // reset the parameter map of the second kd entry and linked it with new memory space
-         kd_entry_2->kernel_grid->m_param_mem_map.clear();
-         kd_entry_2->kernel_grid->m_param_mem_map[remaining_count] = new_mspace;
-         kd_entry_2->kernel_grid->set_param_mem(new_mspace);
+//         kd_entry_2->kernel_grid->m_param_mem_map.clear();
+//         kd_entry_2->kernel_grid->m_param_mem_map[remaining_count] = new_mspace;
+//         kd_entry_2->kernel_grid->set_param_mem(new_mspace);
       }
       DEV_RUNTIME_REPORT("DCC: child kernel " << kd_entry_2->kernel_grid->get_uid() << " merged into child kernel " << kd_entry_1->kernel_grid->get_uid() << ", new threads " << total_thread_sum << ", new blocks " << num_blocks << ", kernel " << kd_entry_1->kernel_grid->get_parent()->get_uid() << " now has " << kd_entry_1->kernel_grid->get_parent()->get_child_count() << " child kernels.");
       kd_entry_1->merge_count += kd_entry_2->merge_count;
