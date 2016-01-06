@@ -543,8 +543,8 @@ class simt_stack {
 };
 
 //Po-Han: dynamic child thread consolidation, reserve 4G space for global heap
-//#define DCC_PARAM_START   0xE0000000
-#define DCC_PARAM_START   0x180000000
+#define DCC_PARAM_START   0xE0000000
+//#define DCC_PARAM_START   0x180000000
 
 #define GLOBAL_HEAP_START 0x80000000
 // start allocating from this address (lower values used for allocating globals in .ptx file)
