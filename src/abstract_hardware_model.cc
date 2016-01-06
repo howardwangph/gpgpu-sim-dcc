@@ -94,7 +94,8 @@ void gpgpu_functional_sim_config::ptx_set_tex_cache_linesize(unsigned linesize)
     gpgpu_t::gpgpu_t( const gpgpu_functional_sim_config &config )
 : m_function_model_config(config)
 {
-    m_global_mem = new memory_space_impl<8192>("global",64*1024);
+    m_global_mem = new memory_space_impl<8192>("global",1024*1024);
+//    m_global_mem = new memory_space_impl<8192>("global",64*1024);
     m_tex_mem = new memory_space_impl<8192>("tex",64*1024);
     m_surf_mem = new memory_space_impl<8192>("surf",64*1024);
 
@@ -220,7 +221,7 @@ void warp_inst_t::generate_mem_accesses()
 	    break;
 	case shared_space: break;
 	case dcc_param_space: 
-//			   fprintf(stdout, "leave generate_mem_accesses early\n");
+			   fprintf(stdout, "leave generate_mem_accesses early\n");
 			   return;
 	default: assert(0); break; 
     }
@@ -752,13 +753,13 @@ bool kernel_info_t::children_all_finished() {
 
 void kernel_info_t::notify_parent_finished() {
    if(m_parent_kernel) {
-      if(parent_child_dependency) {
+      if(m_parent_kernel->parent_child_dependency) {
          if(g_dyn_child_thread_consolidation){
             std::list<ptx_thread_info *>::iterator it;
             for(it=m_parent_threads.begin(); it!=m_parent_threads.end(); it++){
                m_parent_block_idx = (*it)->get_block_idx();
                m_parent_kernel->block_state[m_parent_block_idx].thread.set((*it)->get_thread_idx());
-               fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
+               fprintf(stdout, "DCC: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
             }
             if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
                m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
@@ -767,7 +768,9 @@ void kernel_info_t::notify_parent_finished() {
             m_parent_kernel->block_state[m_parent_block_idx].thread.set(m_parent_thread_idx);
             fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
             if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
-               m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
+               //m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
+               m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
+            fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
             }
          }
       }

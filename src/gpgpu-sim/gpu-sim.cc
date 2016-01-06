@@ -1456,6 +1456,10 @@ void shader_core_ctx::issue_block2core( kernel_info_t &kernel )
 	
 	unsigned idx = get_hw2global()[free_cta_hw_id];
 	kernel.block_state[idx].issued = 1;
+
+        // CDP parent-child dependency
+	kernel.block_state[idx].cluster_id = m_tpc;
+	kernel.block_state[idx].shader_id = m_config->sid_to_cid(m_sid);  
 	// ---
 
 	// determine hardware threads and warps that will be used for this CTA
@@ -1544,7 +1548,40 @@ int gpgpu_sim::next_clock_domain(void)
 
 void gpgpu_sim::issue_block2core()
 {
-	unsigned last_issued = m_last_cluster_issue; 
+      // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
+	for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
+	   kernel_info_t *kernel = m_running_kernels[n];
+           if(kernel && !g_dyn_child_thread_consolidation){
+              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+
+                 if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
+                    kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
+                    fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
+                 }
+                 if ( kernel->block_state[b_idx].switched && 
+                   !kernel->block_state[b_idx].preempted){ // switching this cta
+                    if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
+                       //m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
+                    }else{
+                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
+                    }
+                 }
+
+              }
+              // end of switching
+
+              // issue the switched blocks
+              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+                 if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
+                    m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
+                    break;
+                 }
+              }
+           }
+        }
+        // end of issuing switched blocks
+
+        unsigned last_issued = m_last_cluster_issue; 
 	for (unsigned i=0;i<m_shader_config->n_simt_clusters;i++) {
 		unsigned idx = (i + last_issued + 1) % m_shader_config->n_simt_clusters;
 		unsigned num = m_cluster[idx]->issue_block2core();

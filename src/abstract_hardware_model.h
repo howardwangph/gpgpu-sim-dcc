@@ -206,6 +206,8 @@ struct block_info {
 
 	// global id of this block
 	dim3 block_id;
+
+	unsigned cluster_id, shader_id;
 };
 
 //Andrew
@@ -540,8 +542,9 @@ class simt_stack {
 		unsigned m_warp_size;
 };
 
-//Po-Han: dynamic child thread consolidation
-#define DCC_PARAM_START   0xE0000000
+//Po-Han: dynamic child thread consolidation, reserve 4G space for global heap
+//#define DCC_PARAM_START   0xE0000000
+#define DCC_PARAM_START   0x180000000
 
 #define GLOBAL_HEAP_START 0x80000000
 // start allocating from this address (lower values used for allocating globals in .ptx file)

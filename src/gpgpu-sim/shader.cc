@@ -886,6 +886,7 @@ void scheduler_unit::cycle()
 			if(pI->m_is_cdp && warp(warp_id).m_cdp_latency > 0) {
 				assert(warp(warp_id).m_cdp_dummy);
 				warp(warp_id).m_cdp_latency--;
+//				fprintf(stdout, "CDP: warp stall due to builtin function latency %d\n", warp(warp_id).m_cdp_latency);
 				break;
 			}
 
@@ -929,12 +930,13 @@ void scheduler_unit::cycle()
 								if(pI->m_is_cdp && !warp(warp_id).m_cdp_dummy) {
 									assert(warp(warp_id).m_cdp_latency == 0);
 
-									extern unsigned cdp_latency[5];
+									extern unsigned cdp_latency[6];
 									if(pI->m_is_cdp == 1)
 										warp(warp_id).m_cdp_latency = cdp_latency[pI->m_is_cdp - 1];
-									else //cudaLaunchDeviceV2 and cudaGetParameterBufferV2
-										warp(warp_id).m_cdp_latency = cdp_latency[pI->m_is_cdp - 1]
-											+ cdp_latency[pI->m_is_cdp] * active_mask.count();
+									else if (pI->m_is_cdp == 2 || pI->m_is_cdp == 4) //cudaLaunchDeviceV2 and cudaGetParameterBufferV2
+										warp(warp_id).m_cdp_latency = cdp_latency[pI->m_is_cdp - 1] + cdp_latency[pI->m_is_cdp] * active_mask.count();
+                                                                        else
+                                                                           warp(warp_id).m_cdp_latency = cdp_latency[pI->m_is_cdp];
 									warp(warp_id).m_cdp_dummy = true;
 									break;
 								}
@@ -3391,6 +3393,38 @@ unsigned simt_core_cluster::issue_block2core() {
       unsigned core = (i+m_cta_issue_next_core+1)%m_config->n_simt_cores_per_cluster;
 
       kernel_info_t * kernel;
+      
+/*      // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
+      kernel = m_core[core]->get_kernel();
+      if(kernel && !g_dyn_child_thread_consolidation){
+         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+          
+            if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
+               kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_core[core]->switching_latency( *kernel );
+               fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
+            }
+            if ( kernel->block_state[b_idx].switched && 
+              !kernel->block_state[b_idx].preempted){ // switching this cta
+              if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
+               switching_ctas(*kernel, core, b_idx);
+              }else{
+                 fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
+              }
+            }
+
+         }
+            // end of switching
+
+            // issue the switched blocks
+         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+            if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
+               m_core[core]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
+               break;
+            }
+         }
+      }
+      // end of issueing switched blocks*/
+
       //Jin: fetch kernel according to concurrent kernel setting
       if(m_config->gpgpu_concurrent_kernel_sm) {//concurrent kernel on sm 
          //always select latest issued kernel
@@ -3419,29 +3453,6 @@ unsigned simt_core_cluster::issue_block2core() {
          m_cta_issue_next_core=core; 
          break;
       }
-
-      // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
-      if(kernel && !g_dyn_child_thread_consolidation){
-         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-          
-            if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
-               kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_core[core]->switching_latency( *kernel );
-            }
-            if ( ( kernel->block_state[b_idx].switched && gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ) && !kernel->block_state[b_idx].preempted) // switching this cta
-               switching_ctas(*kernel, core, b_idx);
-
-         }
-            // end of switching
-
-            // issue the switched blocks
-         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-            if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
-               m_core[core]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
-               break;
-            }
-         }
-      }
-      // end of issueing switched blocks
    }
    return num_blocks_issued;
 }
@@ -3666,147 +3677,147 @@ unsigned long long shader_core_ctx::switching_latency( kernel_info_t &k ) {
 // Andrew
 void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id )
 {
-unsigned padded_cta_size = kernel_1.threads_per_cta(); 
-unsigned cta_size = kernel_1.threads_per_cta(); 
-if (padded_cta_size%m_config->warp_size)
-   padded_cta_size = ((padded_cta_size/m_config->warp_size)+1)*(m_config->warp_size);
-unsigned warps_per_cta = padded_cta_size / m_config->warp_size;
+   unsigned padded_cta_size = kernel_1.threads_per_cta(); 
+   unsigned cta_size = kernel_1.threads_per_cta(); 
+   if (padded_cta_size%m_config->warp_size)
+      padded_cta_size = ((padded_cta_size/m_config->warp_size)+1)*(m_config->warp_size);
+   unsigned warps_per_cta = padded_cta_size / m_config->warp_size;
 
-unsigned preemptable = true;
-if(m_core[core]->m_cta_status[preempted_cta_id] > 0){
-   for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
-      m_core[core]->m_warp[warp_id].ibuffer_flush();
-      if(m_core[core]->m_warp[warp_id].stores_done() && 
-        !m_core[core]->m_scoreboard->pendingWrites(warp_id) && 
-        !m_core[core]->m_warp[warp_id].num_inst_in_pipeline() &&
-        !m_core[core]->m_warp[warp_id].imiss_pending())
-         preemptable &= true;
-      else
-         preemptable &= false;
+   unsigned preemptable = true;
+   if(m_core[core]->m_cta_status[preempted_cta_id] > 0){
+      for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
+         m_core[core]->m_warp[warp_id].ibuffer_flush();
+         if(m_core[core]->m_warp[warp_id].stores_done() && 
+           !m_core[core]->m_scoreboard->pendingWrites(warp_id) && 
+           !m_core[core]->m_warp[warp_id].num_inst_in_pipeline() &&
+           !m_core[core]->m_warp[warp_id].imiss_pending())
+            preemptable &= true;
+         else
+            preemptable &= false;
 
-   }
-}
-else 
-preemptable = false;
-
-bool preemption_succeed = false;	
-unsigned global_cta_id = -1;
-
-if(preemptable){
-   if(m_core[core]->m_thread[preempted_cta_id * padded_cta_size] && m_core[core]->get_hw2global().find(preempted_cta_id) == m_core[core]->get_hw2global().end()){
-      global_cta_id = m_core[core]->m_thread[preempted_cta_id * padded_cta_size]->get_block_idx();
-      m_core[core]->get_hw2global()[preempted_cta_id] = global_cta_id;
-   }
-   else if(m_core[core]->get_hw2global().find(preempted_cta_id) != m_core[core]->get_hw2global().end())
-      global_cta_id = m_core[core]->get_hw2global()[preempted_cta_id];
-
-
-   if(global_cta_id != -1 && kernel_1.getSwitchedCTA().find(global_cta_id) == kernel_1.getSwitchedCTA().end()){
-      switched_out_cta m_switched_out_cta;
-      unsigned num_warps = padded_cta_size / m_config->warp_size;
-      /* Initialize switched-out cta */
-      m_switched_out_cta.id = global_cta_id;
-      m_switched_out_cta.cta_size = padded_cta_size;
-      m_switched_out_cta.num_warps = num_warps;
-      m_switched_out_cta.m_warp = new shd_warp_t[num_warps];	
-      m_switched_out_cta.m_simt_stack = new simt_stack*[num_warps];
-      m_switched_out_cta.m_threadState = new thread_ctx_t[padded_cta_size];
-      m_switched_out_cta.m_thread = new ptx_thread_info*[padded_cta_size];
-      m_switched_out_cta.m_local_memory = new memory_space*[padded_cta_size];
-      m_switched_out_cta.m_regs = new std::set<unsigned>[num_warps];
-      m_switched_out_cta.m_longopregs = new std::set<unsigned>[num_warps];
-      ////////////////////////////////
-      kernel_1.insertSwitchedCTA(global_cta_id, m_switched_out_cta);
-   }
-   switched_out_cta& m_switched_out_cta = kernel_1.getSwitchedCTA().find(global_cta_id)->second;
-   /********** Store barrier information **********/	
-   for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
-      for(unsigned bar_id = 0; bar_id < m_core[core]->get_barrier_set().m_max_barriers_per_cta; bar_id++)
-         m_switched_out_cta.m_bar_id_to_warps[bar_id][warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_bar_id_to_warps[bar_id][warp_id];
-      m_switched_out_cta.m_warp_active[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_warp_active[warp_id];
-      m_switched_out_cta.m_warp_at_barrier[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_warp_at_barrier[warp_id];
-      m_switched_out_cta.m_cta_to_warps[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_cta_to_warps[preempted_cta_id][warp_id];
-   }
-   /////////////////////////////////////////////////
-   for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
-      unsigned idx;
-      for(unsigned tid = warp_id * m_config->warp_size; tid < (warp_id + 1) * m_config->warp_size; tid++){
-         /********** Store thread information **********/	
-         m_switched_out_cta.m_thread[tid - preempted_cta_id * padded_cta_size] = m_core[core]->m_thread[tid];
-         m_switched_out_cta.m_threadState[tid - preempted_cta_id * padded_cta_size] = m_core[core]->m_threadState[tid];
-         if(tid - preempted_cta_id * padded_cta_size < tid - preempted_cta_id * padded_cta_size + cta_size){	
-            m_switched_out_cta.m_local_memory[tid - preempted_cta_id * padded_cta_size] = local_memory_lookup[core].find(tid)->second;
-            char buf[512];
-            snprintf(buf,512,"local_%u_%u", m_core[core]->m_sid, tid);
-            local_memory_lookup[core].find(tid)->second = NULL;
-            memory_space *local_mem = new memory_space_impl<32>(buf,32);
-            local_memory_lookup[core][tid] = local_mem;
-         }
-         /////////////////////////////////////////////////
-         idx = m_core[core]->m_thread[tid]->get_block_idx();
-         if(!m_core[core]->m_warp[warp_id].done_exit()
-           && m_core[core]->m_threadState[tid].m_active == true){
-            m_core[core]->register_cta_thread_exit(preempted_cta_id, &(m_core[core]->m_thread[tid]->get_kernel()));
-            m_core[core]->m_not_completed -= 1;
-            m_core[core]->m_active_threads.reset(tid);
-         }
-         m_core[core]->m_threadState[tid].m_active = false; 
-         assert( m_core[core]->m_thread[tid]!= NULL );
-         m_core[core]->m_thread[tid] = NULL;
       }
-      /********** Store warp information **********/
-      m_switched_out_cta.m_warp[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_warp[warp_id];
-      m_switched_out_cta.m_warp[warp_id - preempted_cta_id * warps_per_cta].set_preempted();
-      m_core[core]->m_warp[warp_id].m_inst_at_barrier = NULL;
-      m_switched_out_cta.m_simt_stack[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->getSimtStack()[warp_id];
-      m_switched_out_cta.m_regs[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_scoreboard->getRegTable()[warp_id];
-      m_switched_out_cta.m_longopregs[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_scoreboard->getLongOpRegs()[warp_id];
-      /////////////////////////////////////////////
-      for (int t=0; t<m_config->warp_size; t++)
-         m_core[core]->m_warp[warp_id].set_completed(t);
-      assert(m_core[core]->m_warp[warp_id].functional_done());
-      assert(!m_core[core]->m_warp[warp_id].num_inst_in_pipeline());
-      assert(m_core[core]->m_warp[warp_id].hardware_done());
-      m_core[core]->getSimtStack()[warp_id] = NULL;
-      m_core[core]->getSimtStack()[warp_id] = new simt_stack(warp_id, m_config->warp_size);
-
-
-      if(warp_id == m_core[core]->get_ifetch_buffer().m_warp_id)
-         m_core[core]->get_ifetch_buffer().m_valid = false;
-      m_core[core]->m_warp[warp_id].set_preempted();
-      m_core[core]->m_warp[warp_id].ibuffer_flush();
-      m_core[core]->m_warp[warp_id].set_done_exit();
-      preemption_succeed = true;
    }
+   else 
+      preemptable = false;
 
-   //Andrew: To ensure if one block is preemptable now, it MUST be preempted right this time.
-   assert(preemption_succeed);
-   assert(!m_core[core]->m_cta_status[preempted_cta_id]);
-   assert(preempted_cta_id < MAX_THREAD_PER_SM / 32); //Make sure we are preempting kernel1!
+   bool preemption_succeed = false;	
+   unsigned global_cta_id = -1;
 
-   printf("Completely Preempted from core %d: %d\n\n", core, global_cta_id);
-   printf("barrier info. for core: %d\n", m_config->cid_to_sid(core, m_cluster_id));
-   m_core[core]->get_barrier_set().dump();
-   printf("\n\n");
-   kernel_1.block_state[global_cta_id].preempted = 1;
-   kernel_1.block_state[global_cta_id].issued = 0;
-   kernel_1.block_state[global_cta_id].done = 0;
+   if(preemptable){
+      if(m_core[core]->m_thread[preempted_cta_id * padded_cta_size] && m_core[core]->get_hw2global().find(preempted_cta_id) == m_core[core]->get_hw2global().end()){
+         global_cta_id = m_core[core]->m_thread[preempted_cta_id * padded_cta_size]->get_block_idx();
+         m_core[core]->get_hw2global()[preempted_cta_id] = global_cta_id;
+      }
+      else if(m_core[core]->get_hw2global().find(preempted_cta_id) != m_core[core]->get_hw2global().end())
+         global_cta_id = m_core[core]->get_hw2global()[preempted_cta_id];
 
-   m_core[core]->get_hw2global().erase(preempted_cta_id);
-   m_switched_out_cta.m_ptx_cta_info = ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid];
-   ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid]->deleteCTA(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
-   ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = NULL;
-   ptx_cta_lookup.erase(ptx_cta_lookup.find(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid));
 
-   m_switched_out_cta.m_shared_memory = shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid];
-   shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = NULL;
-   shared_memory_lookup.erase(shared_memory_lookup.find(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid));
-   char buf[512];
-   snprintf(buf,512,"shared_%u", m_core[core]->m_sid);
-   memory_space *shared_mem = new memory_space_impl<16*1024>(buf,4);
-   shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = shared_mem;
-   ptx_cta_info *cta_info = new ptx_cta_info(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
-   ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = cta_info;
-}
+      if(global_cta_id != -1 && kernel_1.getSwitchedCTA().find(global_cta_id) == kernel_1.getSwitchedCTA().end()){
+         switched_out_cta m_switched_out_cta;
+         unsigned num_warps = padded_cta_size / m_config->warp_size;
+         /* Initialize switched-out cta */
+         m_switched_out_cta.id = global_cta_id;
+         m_switched_out_cta.cta_size = padded_cta_size;
+         m_switched_out_cta.num_warps = num_warps;
+         m_switched_out_cta.m_warp = new shd_warp_t[num_warps];	
+         m_switched_out_cta.m_simt_stack = new simt_stack*[num_warps];
+         m_switched_out_cta.m_threadState = new thread_ctx_t[padded_cta_size];
+         m_switched_out_cta.m_thread = new ptx_thread_info*[padded_cta_size];
+         m_switched_out_cta.m_local_memory = new memory_space*[padded_cta_size];
+         m_switched_out_cta.m_regs = new std::set<unsigned>[num_warps];
+         m_switched_out_cta.m_longopregs = new std::set<unsigned>[num_warps];
+         ////////////////////////////////
+         kernel_1.insertSwitchedCTA(global_cta_id, m_switched_out_cta);
+      }
+      switched_out_cta& m_switched_out_cta = kernel_1.getSwitchedCTA().find(global_cta_id)->second;
+      /********** Store barrier information **********/	
+      for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
+         for(unsigned bar_id = 0; bar_id < m_core[core]->get_barrier_set().m_max_barriers_per_cta; bar_id++)
+            m_switched_out_cta.m_bar_id_to_warps[bar_id][warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_bar_id_to_warps[bar_id][warp_id];
+         m_switched_out_cta.m_warp_active[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_warp_active[warp_id];
+         m_switched_out_cta.m_warp_at_barrier[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_warp_at_barrier[warp_id];
+         m_switched_out_cta.m_cta_to_warps[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->get_barrier_set().m_cta_to_warps[preempted_cta_id][warp_id];
+      }
+      /////////////////////////////////////////////////
+      for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
+         unsigned idx;
+         for(unsigned tid = warp_id * m_config->warp_size; tid < (warp_id + 1) * m_config->warp_size; tid++){
+            /********** Store thread information **********/	
+            m_switched_out_cta.m_thread[tid - preempted_cta_id * padded_cta_size] = m_core[core]->m_thread[tid];
+            m_switched_out_cta.m_threadState[tid - preempted_cta_id * padded_cta_size] = m_core[core]->m_threadState[tid];
+            if(tid - preempted_cta_id * padded_cta_size < tid - preempted_cta_id * padded_cta_size + cta_size){	
+               m_switched_out_cta.m_local_memory[tid - preempted_cta_id * padded_cta_size] = local_memory_lookup[core].find(tid)->second;
+               char buf[512];
+               snprintf(buf,512,"local_%u_%u", m_core[core]->m_sid, tid);
+               local_memory_lookup[core].find(tid)->second = NULL;
+               memory_space *local_mem = new memory_space_impl<32>(buf,32);
+               local_memory_lookup[core][tid] = local_mem;
+            }
+            /////////////////////////////////////////////////
+            idx = m_core[core]->m_thread[tid]->get_block_idx();
+            if(!m_core[core]->m_warp[warp_id].done_exit()
+              && m_core[core]->m_threadState[tid].m_active == true){
+               m_core[core]->register_cta_thread_exit(preempted_cta_id, &(m_core[core]->m_thread[tid]->get_kernel()));
+               m_core[core]->m_not_completed -= 1;
+               m_core[core]->m_active_threads.reset(tid);
+            }
+            m_core[core]->m_threadState[tid].m_active = false; 
+            assert( m_core[core]->m_thread[tid]!= NULL );
+            m_core[core]->m_thread[tid] = NULL;
+         }
+         /********** Store warp information **********/
+         m_switched_out_cta.m_warp[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_warp[warp_id];
+         m_switched_out_cta.m_warp[warp_id - preempted_cta_id * warps_per_cta].set_preempted();
+         m_core[core]->m_warp[warp_id].m_inst_at_barrier = NULL;
+         m_switched_out_cta.m_simt_stack[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->getSimtStack()[warp_id];
+         m_switched_out_cta.m_regs[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_scoreboard->getRegTable()[warp_id];
+         m_switched_out_cta.m_longopregs[warp_id - preempted_cta_id * warps_per_cta] = m_core[core]->m_scoreboard->getLongOpRegs()[warp_id];
+         /////////////////////////////////////////////
+         for (int t=0; t<m_config->warp_size; t++)
+            m_core[core]->m_warp[warp_id].set_completed(t);
+         assert(m_core[core]->m_warp[warp_id].functional_done());
+         assert(!m_core[core]->m_warp[warp_id].num_inst_in_pipeline());
+         assert(m_core[core]->m_warp[warp_id].hardware_done());
+         m_core[core]->getSimtStack()[warp_id] = NULL;
+         m_core[core]->getSimtStack()[warp_id] = new simt_stack(warp_id, m_config->warp_size);
+
+
+         if(warp_id == m_core[core]->get_ifetch_buffer().m_warp_id)
+            m_core[core]->get_ifetch_buffer().m_valid = false;
+         m_core[core]->m_warp[warp_id].set_preempted();
+         m_core[core]->m_warp[warp_id].ibuffer_flush();
+         m_core[core]->m_warp[warp_id].set_done_exit();
+         preemption_succeed = true;
+      }
+
+      //Andrew: To ensure if one block is preemptable now, it MUST be preempted right this time.
+      assert(preemption_succeed);
+      assert(!m_core[core]->m_cta_status[preempted_cta_id]);
+      assert(preempted_cta_id < MAX_THREAD_PER_SM / 32); //Make sure we are preempting kernel1!
+
+      printf("Completely Preempted from core %d: %d\n\n", core, global_cta_id);
+      printf("barrier info. for core: %d\n", m_config->cid_to_sid(core, m_cluster_id));
+      m_core[core]->get_barrier_set().dump();
+      printf("\n\n");
+      kernel_1.block_state[global_cta_id].preempted = 1;
+      kernel_1.block_state[global_cta_id].issued = 0;
+      kernel_1.block_state[global_cta_id].done = 0;
+
+      m_core[core]->get_hw2global().erase(preempted_cta_id);
+      m_switched_out_cta.m_ptx_cta_info = ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid];
+      ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid]->deleteCTA(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
+      ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = NULL;
+      ptx_cta_lookup.erase(ptx_cta_lookup.find(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid));
+
+      m_switched_out_cta.m_shared_memory = shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid];
+      shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = NULL;
+      shared_memory_lookup.erase(shared_memory_lookup.find(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid));
+      char buf[512];
+      snprintf(buf,512,"shared_%u", m_core[core]->m_sid);
+      memory_space *shared_mem = new memory_space_impl<16*1024>(buf,4);
+      shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = shared_mem;
+      ptx_cta_info *cta_info = new ptx_cta_info(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
+      ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = cta_info;
+   }
 }
 

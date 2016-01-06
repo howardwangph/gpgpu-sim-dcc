@@ -1247,6 +1247,8 @@ ptx_instruction::ptx_instruction( int opcode,
            m_is_cdp = 2;
        if(fname == "cudaLaunchDeviceV2")
            m_is_cdp = 4;
+       if(fname == "cudaDeviceSynchronize")
+           m_is_cdp = 5;
 
    }
 }
