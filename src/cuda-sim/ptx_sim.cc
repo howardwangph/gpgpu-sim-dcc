@@ -46,6 +46,25 @@ ptx_cta_info::ptx_cta_info( unsigned sm_idx )
    m_uid = g_ptx_cta_info_uid++;
 }
 
+void ptx_cta_info::insertCTA(unsigned sm_idx)
+{
+ //  assert( g_ptx_cta_info_sm_idx_used.find(sm_idx) == g_ptx_cta_info_sm_idx_used.end() );
+   g_ptx_cta_info_sm_idx_used.insert(sm_idx);
+   m_uid = g_ptx_cta_info_uid++;
+}
+
+void ptx_cta_info::deleteCTA(unsigned sm_idx)
+{
+   //assert( g_ptx_cta_info_sm_idx_used.find(sm_idx) != g_ptx_cta_info_sm_idx_used.end() );
+   g_ptx_cta_info_sm_idx_used.erase(g_ptx_cta_info_sm_idx_used.find(sm_idx));
+   m_uid = g_ptx_cta_info_uid--;
+}
+
+void ptx_cta_info::setSMidx(unsigned sm_idx)
+{
+	m_sm_idx = sm_idx;
+}
+
 void ptx_cta_info::add_thread( ptx_thread_info *thd )
 {
    m_threads_in_cta.insert(thd);

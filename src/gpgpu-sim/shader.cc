@@ -2735,15 +2735,15 @@ void barrier_set_t::deallocate_barrier( unsigned cta_id )
 		return;
 	warp_set_t warps = w->second;
 	warp_set_t at_barrier = warps & m_warp_at_barrier;
-	assert( at_barrier.any() == false ); // no warps stuck at barrier
+//	assert( at_barrier.any() == false ); // no warps stuck at barrier
 	warp_set_t active = warps & m_warp_active;
-	assert( active.any() == false ); // no warps in CTA still running
+//	assert( active.any() == false ); // no warps in CTA still running
 	m_warp_active &= ~warps;
 	m_warp_at_barrier &= ~warps;
 
 	for(unsigned i=0; i<m_max_barriers_per_cta; i++){
 		warp_set_t at_a_specific_barrier = warps & m_bar_id_to_warps[i];
-		assert( at_a_specific_barrier.any() == false ); // no warps stuck at barrier
+//		assert( at_a_specific_barrier.any() == false ); // no warps stuck at barrier
 		m_bar_id_to_warps[i] &=~warps;
 	}
 	m_cta_to_warps.erase(w);
@@ -3653,25 +3653,27 @@ void shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst, unsigned 
 }
 
 // dekline
-unsigned long long shader_core_ctx::switching_latency( kernel_info_t &k ) {
-   unsigned threads_per_cta  = k.threads_per_cta();
-   const class function_info *kernel = k.entry();
-   unsigned int padded_cta_size = threads_per_cta;
-   if (padded_cta_size%m_config->warp_size) 
-      padded_cta_size = ((padded_cta_size/m_config->warp_size)+1)*(m_config->warp_size);
+// cost estimation for different preemption techniques
+unsigned long long shader_core_ctx::switching_latency( kernel_info_t &k )
+{
+    unsigned threads_per_cta  = k.threads_per_cta();
+	const class function_info *kernel = k.entry();
+	unsigned int padded_cta_size = threads_per_cta;
+	if (padded_cta_size%m_config->warp_size) 
+		padded_cta_size = ((padded_cta_size/m_config->warp_size)+1)*(m_config->warp_size);
 
-   const struct gpgpu_ptx_sim_kernel_info *kernel_info = ptx_sim_kernel_info(kernel);
-   float bandwidth;
-   float context;
-   float time;
-   unsigned long long latency;
+	const struct gpgpu_ptx_sim_kernel_info *kernel_info = ptx_sim_kernel_info(kernel);
+	unsigned long long bandwidth;
+	unsigned context;
+	double time;
+	unsigned long long latency;
 
-   bandwidth = 6 * 2 * 4 * 1848000000 * 2 ;  
-   context = (unsigned)kernel_info->smem + ((((unsigned)kernel_info->regs+3)&~3)*4);
-   time = context / (bandwidth/30);
-   latency = (unsigned long long)(time * 700000000);
+	bandwidth = 6 * 2 * 4 * 1848000000llu * 2;  
+	context = (unsigned)kernel_info->smem + ((padded_cta_size * ((kernel_info->regs+3)&~3))*4);
+	time = (double) context / (bandwidth/15);
+	latency = (unsigned long long)(time * 700000000);
 
-   return latency;
+	return latency;
 }
 
 // Andrew

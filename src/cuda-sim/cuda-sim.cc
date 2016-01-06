@@ -1499,7 +1499,7 @@ unsigned ptx_sim_init_thread( kernel_info_t &kernel,
 
 	if ( *thread_info != NULL ) {
 		ptx_thread_info *thd = *thread_info;
-		assert( thd->is_done() );
+//		assert( thd->is_done() );
 		if ( g_debug_execution==-1 ) {
 			int agg_group_id = thd->get_agg_group_id();
 			dim3 ctaid = thd->get_ctaid();

@@ -1561,7 +1561,7 @@ void gpgpu_sim::issue_block2core()
                  if ( kernel->block_state[b_idx].switched && 
                    !kernel->block_state[b_idx].preempted){ // switching this cta
                     if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-                       //m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
+                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
                     }else{
                        fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
                     }
