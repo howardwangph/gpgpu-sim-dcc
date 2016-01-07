@@ -123,6 +123,7 @@ unsigned g_dyn_child_thread_consolidation_version = 0;
 unsigned g_dcc_timeout_threshold = 0;
 unsigned pending_child_threads = 0;
 application_id g_app_name = BFS;
+bool g_restrict_parent_block_count = false;
 
 bool compare_dcc_kd_entry(const dcc_kernel_distributor_t &a, const dcc_kernel_distributor_t &b)
 {

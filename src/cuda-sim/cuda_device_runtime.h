@@ -41,6 +41,7 @@ class dcc_kernel_distributor_t {
 extern bool g_dyn_child_thread_consolidation;	
 extern unsigned g_dcc_timeout_threshold;
 extern unsigned g_dyn_child_thread_consolidation_version;
+extern bool g_restrict_parent_block_count;
 
 //Po-Han: hand-coded application ids for DCC
 typedef enum _application_id {

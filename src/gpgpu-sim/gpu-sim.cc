@@ -461,6 +461,10 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 			&g_dyn_child_thread_consolidation, "Turn on dynamic child-thread consolidation support, Default: false",
 			"0");
 
+	option_parser_register(opp, "-restrict_parent_block_count", OPT_BOOL,
+	                &g_restrict_parent_block_count, "Restrict number of parent block to reserve resources for child kernels, Default: false",
+	                "0");
+
 	//Po-Han: hand-coded application id for DCC
 	extern application_id g_app_name;
 	option_parser_register(opp, "-application_name", OPT_INT32,
@@ -1235,6 +1239,10 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 	if (padded_cta_size%warp_size) 
 		padded_cta_size = ((padded_cta_size/warp_size)+1)*(warp_size);
 
+        float occupied_thread_percentage, occupied_shmem_percentage, occupied_reg_percentage;
+        float newblock_thread_percentage, newblock_shmem_percentage, newblock_reg_percentage;
+        bool heavy_loaded = false;
+
 	if(m_occupied_n_threads + padded_cta_size > m_config->n_thread_per_shader)
 		return false;
 
@@ -1252,6 +1260,28 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 
 	if(m_occupied_ctas +1 > m_config->max_cta_per_core)
 		return false;
+	
+	/* Po-Han DCC: restrict number of parent blocks issued to a SM to reserve resources for child kernels. */
+	extern application_id g_app_name;
+	if(g_restrict_parent_block_count && !k.is_child){
+	   occupied_thread_percentage = (float)m_occupied_n_threads / m_config->n_thread_per_shader;
+	   occupied_shmem_percentage = (float)m_occupied_shmem / m_config->gpgpu_shmem_size;
+	   occupied_reg_percentage = (float)m_occupied_regs / m_config->gpgpu_shader_registers;
+	   newblock_thread_percentage = (float)padded_cta_size / m_config->n_thread_per_shader;
+	   newblock_shmem_percentage = (float)kernel_info->smem / m_config->gpgpu_shmem_size;
+	   newblock_reg_percentage = (float)used_regs / m_config->gpgpu_shader_registers;
+	   if (/*occupied_thread_percentage > 0.6 || 
+	       occupied_shmem_percentage > 0.6 || 
+	       occupied_reg_percentage > 0.6 || */
+	       occupied_thread_percentage + newblock_thread_percentage > 0.85 || 
+	       occupied_shmem_percentage + newblock_shmem_percentage > 0.85 || 
+	       occupied_reg_percentage + newblock_reg_percentage > 0.85 ){
+//	      printf("GPGPU-Sim uArch: Prevent kernel %d(%0.3f, %0.3f, %0.3f) from issuing, (%0.3f, %0.3f, %0.3f) resource occupied.\n", k.get_uid(), newblock_thread_percentage, newblock_shmem_percentage, newblock_reg_percentage, occupied_thread_percentage, occupied_shmem_percentage, occupied_reg_percentage);
+	      if(g_app_name >= 4 && g_app_name < 8){
+                 return false;
+              }
+           }
+	}
 
 	if(occupy) {
 		m_occupied_n_threads += padded_cta_size;
@@ -1561,9 +1591,9 @@ void gpgpu_sim::issue_block2core()
                  if ( kernel->block_state[b_idx].switched && 
                    !kernel->block_state[b_idx].preempted){ // switching this cta
                     if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
+//                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
                     }else{
-                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
+//                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
                     }
                  }
 

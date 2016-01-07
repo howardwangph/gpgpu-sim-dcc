@@ -2560,7 +2560,7 @@ unsigned int shader_core_config::max_cta( const kernel_info_t &k ) const
 		if (result == result_shmem) printf (" shmem");
 		if (result == result_regs) printf (" regs");
 		if (result == result_cta) printf (" cta_limit");
-		printf ("\n");
+		printf (", resource usage (%0.3f, %0.3f, %0.3f, %0.3f)\n", (float)padded_cta_size / n_thread_per_shader, (float)kernel_info->smem / gpgpu_shmem_size, (float)(padded_cta_size * ((kernel_info->regs+3)&~3)) / gpgpu_shader_registers, (float)1/max_cta_per_core);
 	}
 
 	//gpu_max_cta_per_shader is limited by number of CTAs if not enough to keep all cores busy    
