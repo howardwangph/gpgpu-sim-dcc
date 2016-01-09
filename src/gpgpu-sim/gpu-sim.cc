@@ -662,6 +662,7 @@ void gpgpu_sim::set_kernel_done( kernel_info_t *kernel )
 		if( *k == kernel ) {
 			kernel->end_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
 			fprintf(stdout, "kernel %u ends at %llu\n", uid, kernel->end_cycle);
+			launch_one_device_kernel(true, kernel, NULL);
 			fflush(stdout);
 			*k = NULL;
 			break;
@@ -812,7 +813,7 @@ bool gpgpu_sim::active()
 	extern std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
 	if( !g_cuda_dcc_kernel_distributor.empty() ){
 		printf("GPGPU-Sim remains active since there are %d child kernels remaining.\n", g_cuda_dcc_kernel_distributor.size());
-		launch_one_device_kernel(true);
+		launch_one_device_kernel(true, NULL, NULL);
 		return true;
 	}
 	return false;
@@ -1806,7 +1807,7 @@ void gpgpu_sim::cycle()
 
 		if (!g_dyn_child_thread_consolidation){
 			//Jin: for cdp support
-			launch_one_device_kernel(true);
+			launch_one_device_kernel(true, NULL, NULL);
 		} else {
 			unsigned n;
 			bool no_more_kernel = false;
@@ -1819,9 +1820,9 @@ void gpgpu_sim::cycle()
 
 			//Po-Han DCC: no more kernels --> launch a child kernel in the kernel distributor
 			if(no_more_kernel) {
-				launch_one_device_kernel(true);
+				launch_one_device_kernel(true, NULL, NULL);
 			} else {
-				launch_one_device_kernel(false);
+				launch_one_device_kernel(false, NULL, NULL);
 			}
 		}
 	}

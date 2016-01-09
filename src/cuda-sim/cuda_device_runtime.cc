@@ -78,11 +78,17 @@ typedef enum _device_launch_op_name {
   AMR,
   JOIN,
   SSSP,
-  MST,
+  COLOR,
   MIS,
   PAGERANK,
   KMEANS
   } application_id;*/
+
+typedef enum _dev_launch_type {
+   NORMAL,
+   PARENT_FINISHED,
+   PARENT_BLOCK_SYNC
+} dev_launch_type;
 
 class device_launch_operation_t {
 
@@ -124,6 +130,8 @@ unsigned g_dcc_timeout_threshold = 0;
 unsigned pending_child_threads = 0;
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
+std::string name1("inicsr_CdpKernel");
+std::string name2("spmv_csr_scalar_CdpKernel");
 
 bool compare_dcc_kd_entry(const dcc_kernel_distributor_t &a, const dcc_kernel_distributor_t &b)
 {
@@ -277,6 +285,8 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
    unsigned int new_offset_b_1, new_offset_b_2;
    unsigned int num_blocks, thread_per_block;
    dim3 gDim;
+   unsigned parent_block_idx_1, parent_block_idx_2;
+   size_t found1, found2;
 
    remaining = false;
    switch(g_app_name){
@@ -352,13 +362,110 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       total_thread_offset = 4;
       kernel_param_size = 56;
       break;
-   case MST:
+   case COLOR:
+      //[offset (4B), total_thread (4B), base_a~d (8Bx3), var (8B)]
+      mspace1->read((size_t) 0, 4, &offset_a_1);
+      mspace2->read((size_t) 0, 4, &offset_a_2);
+      mspace1->read((size_t) 4, 4, &total_thread_1);
+      mspace2->read((size_t) 4, 4, &total_thread_2);
+
+      assert( kd_entry_1->thread_count == total_thread_1 );
+      assert( kd_entry_2->thread_count == total_thread_2 );
+
+      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
+      parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
+      if(parent_block_idx_1 != parent_block_idx_2){
+         return false;
+      }
+      if( offset_a_1 + total_thread_1 == offset_a_2 ){
+         DEV_RUNTIME_REPORT("DCC: COLOR continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
+         continous_offset = true;
+      }
+      total_thread_offset = 4;
+      kernel_param_size = 48;
       break;
    case MIS:
+      //[offset (4B), total_thread (4B), var (8B), base_a~c (8Bx3)]
+      mspace1->read((size_t) 0, 4, &offset_a_1);
+      mspace2->read((size_t) 0, 4, &offset_a_2);
+      mspace1->read((size_t) 4, 4, &total_thread_1);
+      mspace2->read((size_t) 4, 4, &total_thread_2);
+
+      assert( kd_entry_1->thread_count == total_thread_1 );
+      assert( kd_entry_2->thread_count == total_thread_2 );
+
+      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
+      parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
+      if(parent_block_idx_1 != parent_block_idx_2){
+         return false;
+      }
+      if( offset_a_1 + total_thread_1 == offset_a_2 ){
+         DEV_RUNTIME_REPORT("DCC: MIS continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
+         continous_offset = true;
+      }
+      total_thread_offset = 4;
+      kernel_param_size = 40;
       break;
    case PAGERANK:
+      found1 = kd_entry_1->kernel_grid->name().find(name1);
+      found2 = kd_entry_1->kernel_grid->name().find(name2);
+      //[offset (4B), total_thread (4B), var (8B), base_a~c (8Bx3)]
+      mspace1->read((size_t) 0, 4, &offset_a_1);
+      mspace2->read((size_t) 0, 4, &offset_a_2);
+      mspace1->read((size_t) 4, 4, &total_thread_1);
+      mspace2->read((size_t) 4, 4, &total_thread_2);
+
+      assert( kd_entry_1->thread_count == total_thread_1 );
+      assert( kd_entry_2->thread_count == total_thread_2 );
+
+      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
+      parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
+      
+      if(found1 != std::string::npos){ //kernel inicsr
+         //[offset (4B), total_thread (4B), base_a~c (8Bx3)]
+         if( offset_a_1 + total_thread_1 == offset_a_2 ){
+            DEV_RUNTIME_REPORT("DCC: PAGERANK-" << name1 << " continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
+            continous_offset = true;
+         }
+         total_thread_offset = 4;
+         kernel_param_size = 32;
+      }else if(found2 != std::string::npos){ //kernel spmv_csr_scalar
+         if(parent_block_idx_1 != parent_block_idx_2){
+            return false;
+         }
+         //[offset (4B), total_thread (4B), var (8B), base_a~c (8Bx3)]
+         if( offset_a_1 + total_thread_1 == offset_a_2 ){
+            DEV_RUNTIME_REPORT("DCC: PAGERANK-" << name2 << " continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
+            continous_offset = true;
+         }
+         total_thread_offset = 4;
+         kernel_param_size = 40;
+      }else{
+         DEV_RUNTIME_REPORT("DCC: unsupported pagerank child kernel name");
+         assert(0);
+      }
       break;
    case KMEANS:
+      //[total_thread (4B), var (4B), const (4B), base_a~b (8Bx2), offset (4B), var (8B)]
+      mspace1->read((size_t)28, 4, &offset_a_1);
+      mspace2->read((size_t)28, 4, &offset_a_2);
+      mspace1->read((size_t) 0, 4, &total_thread_1);
+      mspace2->read((size_t) 0, 4, &total_thread_2);
+
+      assert( kd_entry_1->thread_count == total_thread_1 );
+      assert( kd_entry_2->thread_count == total_thread_2 );
+
+      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
+      parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
+      if(parent_block_idx_1 != parent_block_idx_2){
+         return false;
+      }
+      if( offset_a_1 + total_thread_1 == offset_a_2 ){
+         DEV_RUNTIME_REPORT("DCC: KMEANS continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
+         continous_offset = true;
+      }
+      total_thread_offset = 4;
+      kernel_param_size = 40;
       break;
    case BFS_RODINIA:
       //[var (4B), total_thread (4B), offset (4B), base_a~d (8Bx4)]
@@ -524,13 +631,29 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             }
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
-         case MST:
+         case COLOR:
+            assert(!remaining && !split && !boundary);
+            it->second->read((size_t) 0, 4, &offset_b_1);
+            offset_b_1 -= total_thread_1;
+            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case MIS:
+            assert(!remaining && !split && !boundary);
+            it->second->read((size_t) 0, 4, &offset_b_1);
+            offset_b_1 -= total_thread_1;
+            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case PAGERANK:
+            assert(!remaining && !split && !boundary);
+            it->second->read((size_t) 0, 4, &offset_b_1);
+            offset_b_1 -= total_thread_1;
+            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case KMEANS:
+            assert(!remaining && !split && !boundary);
+            it->second->read((size_t)28, 4, &offset_b_1);
+            offset_b_1 -= total_thread_1;
+            it->second->write((size_t)28, 4, &offset_b_1, NULL, NULL);
             break;
          case BFS_RODINIA:
             it->second->read((size_t) 8, 4, &offset_b_1);
@@ -792,7 +915,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                break;
             } else if( kd_entry_2->valid == false || kd_entry_2->launched == true ) {
                continue;
-            } else if( kd_entry_1 != kd_entry_2 ){
+            } else if( kd_entry_1 != kd_entry_2 && !kd_entry_1->kernel_grid->name().compare(kd_entry_2->kernel_grid->name()) ){
                //different child kernel, check if they can merge
                bool remained;
                bool merged = merge_two_kernel_distributor_entry( &(*kd_entry_1), &(*kd_entry_2), false, -1, remained );
@@ -800,8 +923,9 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                if(merged){
                   // invalidate and erase kernel 2
                   kd_entry_2->valid = false;
-                  kd_entry_2 = g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
-                  kd_entry_2--;
+                  g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
+//                  kd_entry_2 = g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
+                  kd_entry_2 = g_cuda_dcc_kernel_distributor.begin();
                   DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
                }
             }
@@ -868,7 +992,7 @@ void gpgpusim_cuda_streamCreateWithFlags(const ptx_instruction * pI, ptx_thread_
 
 }
 
-void launch_one_device_kernel(bool no_more_kernel) {
+void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, ptx_thread_info *sync_parent_thread) {
    if(!g_dyn_child_thread_consolidation){
       if(!g_cuda_device_launch_op.empty()) {
          device_launch_operation_t &op = g_cuda_device_launch_op.front();
@@ -886,83 +1010,119 @@ void launch_one_device_kernel(bool no_more_kernel) {
          g_cuda_device_launch_op.pop_front();
       }
    } else {
+      assert (fin_parent == NULL || sync_parent_thread == NULL); //either of these two pointers must be NULL
+      dev_launch_type launch_mode = (fin_parent != NULL) ? PARENT_FINISHED : ((sync_parent_thread != NULL) ? PARENT_BLOCK_SYNC : NORMAL);
       bool enough_threads = false;
       bool parent_finished = false;
+      bool isPRkernel2 = false;
+      size_t found2;
       if ( !g_cuda_dcc_kernel_distributor.empty() ){
-         if( g_cuda_dcc_kernel_distributor.size() > 1 ) {
-            g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry);
-         }
-         std::list<dcc_kernel_distributor_t>::iterator it = g_cuda_dcc_kernel_distributor.begin();
-         enough_threads = (g_dyn_child_thread_consolidation_version == 2) ? (pending_child_threads > it->optimal_kernel_size) : (pending_child_threads > it->optimal_block_size);
-         parent_finished = (it->kernel_grid->get_parent()->end_cycle != 0);
-
-         for(it = g_cuda_dcc_kernel_distributor.begin(); it != g_cuda_dcc_kernel_distributor.end(); it++) //find a valid kd entry with the most threads
-            if(it->valid) break;
-         if(it == g_cuda_dcc_kernel_distributor.end()) return; //all kd entries are invalid
-
-         /* Po-Han DCC
-          * Parent kernel finished 
-          *    --> merge all child threads together
-          * Parent kernel not finished
-          *    --> enough pending thread && no more blocks can be issued from existing kernels
-          *       --> 1) merge until pending threads < optimal block size
-          *       --> 2> merge and output a kernel with optimal block size
-          *    --> otherwise, do nothing
-          * */
-         bool issuing_kernel = false;
-         bool forcing_merge = false;
-         int target_merge_size = -1;
-         bool remained;
-         if(parent_finished){
-            issuing_kernel = true;
-            forcing_merge = true;
-            DEV_RUNTIME_REPORT("DCC: parent kernel finished => merge all child kernels together and issue it");
-         }else if(no_more_kernel && enough_threads){
-            issuing_kernel = true;
-            forcing_merge = true;
-            switch(g_dyn_child_thread_consolidation_version){
-            case 0: // issue a new kernel with exactly 1 block
-               target_merge_size = it->optimal_block_size;
-               break;
-            case 1: // issue a new kernel with as many blocks as possible
-               target_merge_size = pending_child_threads - (pending_child_threads % it->optimal_block_size);
-               break;
-            case 2: // issue a new kernel with optimal kernel size (exact size that can fill up the whole GPU)
-               target_merge_size = it->optimal_kernel_size;
-            default:
-               break;
+         if( launch_mode == NORMAL || launch_mode == PARENT_FINISHED ){
+            if( g_cuda_dcc_kernel_distributor.size() > 1 ) {
+               g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry);
             }
-            DEV_RUNTIME_REPORT("DCC: parent kernel running but enough pending child threads => merge for a " << target_merge_size << " threads block.");
          }
+         std::list<dcc_kernel_distributor_t>::iterator it;
 
-         if(issuing_kernel){
-            if(g_cuda_dcc_kernel_distributor.size() > 1){
-               std::list<dcc_kernel_distributor_t>::iterator it2;
-               for(it2=g_cuda_dcc_kernel_distributor.begin(); it2!=g_cuda_dcc_kernel_distributor.end(); it2++){
-                  if(it2->valid && it2!=it){ //valid and different --> merge
-                     bool merged = merge_two_kernel_distributor_entry(&(*it), &(*it2), forcing_merge, target_merge_size, remained);
-                     if(merged){
-                        if(!remained){
-                           // invalidate and erase kernel 2
-                           it2->valid = false;
-                           it2 = g_cuda_dcc_kernel_distributor.erase(it2);
-                           it2--;
-                        }
-                        DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
+         /* searching for target kernel distributor entry 
+          * NORMAL: any entry that is valid 
+          * PARENT_FINISHED: any entry that is its child
+          * PARENT_BLOCK_SYNC: any entry that is certain block's child */
+         bool found_target_entry = false;
+         int target_merge_size = -1;
+         bool remained = false;
+         for(it = g_cuda_dcc_kernel_distributor.begin(); it != g_cuda_dcc_kernel_distributor.end(); it++){ //find a valid kd entry with the most threads
+            if(it->valid){ 
+               switch(launch_mode){
+               case NORMAL:
+                  enough_threads = (g_dyn_child_thread_consolidation_version == 2) ? (pending_child_threads > it->optimal_kernel_size) : (pending_child_threads > it->optimal_block_size);
+                  if(no_more_kernel && enough_threads){
+                     found_target_entry = true;
+                     switch(g_dyn_child_thread_consolidation_version){
+                     case 0: // issue a new kernel with exactly 1 block
+                        target_merge_size = it->optimal_block_size;
+                        break;
+                     case 1: // issue a new kernel with as many blocks as possible
+                        target_merge_size = pending_child_threads - (pending_child_threads % it->optimal_block_size);
+                        break;
+                     case 2: // issue a new kernel with optimal kernel size (exact size that can fill up the whole GPU)
+                        target_merge_size = it->optimal_kernel_size;
+                     default:
+                        break;
                      }
-                     if (it->thread_count == target_merge_size) break;
+                     DEV_RUNTIME_REPORT("DCC: parent kernel running but enough pending child threads => merge for a " << target_merge_size << " threads block.");
                   }
+                  break;
+               case PARENT_FINISHED:
+                  if (it->kernel_grid->get_parent() == fin_parent){ 
+                     found_target_entry = true;
+                     assert(it->kernel_grid->get_parent()->end_cycle != 0); //make sure that the parent kernel actually finished
+                     target_merge_size = -1;
+                     DEV_RUNTIME_REPORT("DCC: parent kernel " << fin_parent->get_uid() << " finished => merge all its child kernels together and issue it");
+                  }
+                  break;
+               case PARENT_BLOCK_SYNC:
+                  if (it->kernel_grid->get_parent() == &(sync_parent_thread->get_kernel()) ){
+                     std::list<ptx_thread_info *>::iterator parent_it = it->kernel_grid->m_parent_threads.begin();
+                     unsigned tmp_block_idx = (*parent_it)->get_block_idx();
+                     if( tmp_block_idx == sync_parent_thread->get_block_idx()){                   
+                        found_target_entry = true;
+                        target_merge_size = -1;
+                        DEV_RUNTIME_REPORT("DCC: parent block " << sync_parent_thread->get_block_idx() << " has called cudaDeviceSynchronize => merge all its child kernels and issue it");
+                     }
+                  }
+                  break;
+               default:
+                  DEV_RUNTIME_REPORT("DCC: unsupported device launch mode");
+                  assert(0);
+                  break;
+               }
+               if(found_target_entry) break;
+#if 0
+               found2 = it->kernel_grid->name().find(name2);
+               if(found2 != std::string::npos) isPRkernel2 == true;
+               if( g_app_name == COLOR || g_app_name == MIS || (g_app_name == PAGERANK && isPRkernel2) || g_app_name == KMEANS){ //applications with parent-child dependency -> launch it only if its parent block has called cudaDeviceSynchronize
+                  kernel_info_t *parent_grid = it->kernel_grid->get_parent();
+                  unsigned parent_block_idx = it->kernel_grid->m_parent_threads.front()->get_block_idx();
+                  if (parent_grid->block_state[parent_block_idx].switched) break;
+                  else continue;
+               } else {
+                  break;
+               }
+#endif
+            }
+         }
+         if(!found_target_entry) return; //cannot found kernel distributor entry that fits current launch mode
+
+         if(g_cuda_dcc_kernel_distributor.size() > 1){
+            std::list<dcc_kernel_distributor_t>::iterator it2;
+            for(it2=g_cuda_dcc_kernel_distributor.begin(); it2!=g_cuda_dcc_kernel_distributor.end(); it2++){
+               if(it2->valid && it2!=it && !it->kernel_grid->name().compare(it2->kernel_grid->name())){ //valid and different
+                  if( launch_mode == PARENT_BLOCK_SYNC && (it2->kernel_grid->m_parent_threads.front())->get_block_idx() != sync_parent_thread->get_block_idx() ) { //additional constraint
+                     continue;
+                  }
+                  bool merged = merge_two_kernel_distributor_entry(&(*it), &(*it2), true, target_merge_size, remained);
+                  if(merged){
+                     if(!remained){
+                        // invalidate and erase kernel 2
+                        it2->valid = false;
+                        it2 = g_cuda_dcc_kernel_distributor.erase(it2);
+                        it2--;
+                     }
+                     DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
+                  }
+                  if ( target_merge_size != -1 && it->thread_count == target_merge_size) break;
                }
             }
-            DEV_RUNTIME_REPORT("DCC: launch kernel " << it->kernel_grid->get_uid() << " with " << it->thread_count << " threads, merged from " << it->merge_count << " child kernels, waited "  << gpu_sim_cycle+gpu_tot_sim_cycle - it->kernel_grid->launch_cycle << " cycles.");
-            fprintf(stderr, "%llu, %u, %d, %d, %d, %d, %d\n", gpu_tot_sim_cycle+gpu_sim_cycle, it->kernel_grid->get_uid(), it->thread_count, it->merge_count, parent_finished, no_more_kernel, enough_threads);
-            it->kernel_grid->reset_block_state();
-            pending_child_threads -= it->thread_count;
-            stream_operation stream_op = stream_operation(it->kernel_grid, g_ptx_sim_mode, it->stream);
-            g_stream_manager->push(stream_op);
-            // remove a kernel distributor entry after it is launched
-            g_cuda_dcc_kernel_distributor.erase(it);
          }
+         DEV_RUNTIME_REPORT("DCC: launch kernel " << it->kernel_grid->get_uid() << " with " << it->thread_count << " threads, merged from " << it->merge_count << " child kernels, waited "  << gpu_sim_cycle+gpu_tot_sim_cycle - it->kernel_grid->launch_cycle << " cycles.");
+         fprintf(stderr, "%llu, %u, %d, %d, %d, %d, %d\n", gpu_tot_sim_cycle+gpu_sim_cycle, it->kernel_grid->get_uid(), it->thread_count, it->merge_count, parent_finished, no_more_kernel, enough_threads);
+         it->kernel_grid->reset_block_state();
+         pending_child_threads -= it->thread_count;
+         stream_operation stream_op = stream_operation(it->kernel_grid, g_ptx_sim_mode, it->stream);
+         g_stream_manager->push(stream_op);
+         // remove a kernel distributor entry after it is launched
+         g_cuda_dcc_kernel_distributor.erase(it);
       } 
    }
 }
@@ -990,6 +1150,7 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
       if (!thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
          thread->get_kernel().block_state[parent_block_idx].switched = 1;
       }
+      launch_one_device_kernel(true, NULL, thread);
    }
    thread->get_kernel().parent_child_dependency = true;
    
@@ -1008,7 +1169,7 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
 
 void launch_all_device_kernels() {
    while(!g_cuda_device_launch_op.empty()) {
-      launch_one_device_kernel(true);
+      launch_one_device_kernel(true, NULL, NULL);
    }
 }
 
