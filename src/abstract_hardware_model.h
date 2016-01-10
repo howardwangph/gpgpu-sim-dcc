@@ -208,6 +208,7 @@ struct block_info {
 	dim3 block_id;
 
 	unsigned cluster_id, shader_id;
+	bool devsynced;
 };
 
 //Andrew

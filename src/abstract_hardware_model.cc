@@ -613,6 +613,7 @@ kernel_info_t::kernel_info_t( dim3 gridDim, dim3 blockDim, class function_info *
 	block_state[i].time_stamp_switching = 0;
 	block_state[i].time_stamp_switching_issue = 0;
 	block_state[i].thread.set();
+	block_state[i].devsynced = false;
 
 //	for (unsigned j=0; j<threads_per_cta(); j++)
 //	    block_state[i].thread.reset(j);
@@ -650,6 +651,7 @@ void kernel_info_t::reset_block_state()
       block_state[i].time_stamp_switching = 0;
       block_state[i].time_stamp_switching_issue = 0;
       block_state[i].thread.set();
+      block_state[i].devsynced = false;
 
 //      for (unsigned j=0; j<threads_per_cta(); j++)
 //       block_state[i].thread.reset(j);
@@ -754,26 +756,28 @@ bool kernel_info_t::children_all_finished() {
 void kernel_info_t::notify_parent_finished() {
    unsigned tmp_parent_block_idx, tmp_parent_thread_idx;
    if(m_parent_kernel) {
-      if(m_parent_kernel->parent_child_dependency) {
-         if(g_dyn_child_thread_consolidation){
-            std::list<ptx_thread_info *>::iterator it;
-            for(it=m_parent_threads.begin(); it!=m_parent_threads.end(); it++){
-               tmp_parent_block_idx = (*it)->get_block_idx();
-               tmp_parent_thread_idx = (*it)->get_thread_idx();
-               m_parent_kernel->block_state[tmp_parent_block_idx].thread.set(tmp_parent_thread_idx);
-               fprintf(stdout, "DCC: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx, tmp_parent_thread_idx);
-            }
+      if(g_dyn_child_thread_consolidation){
+         std::list<ptx_thread_info *>::iterator it;
+         for(it=m_parent_threads.begin(); it!=m_parent_threads.end(); it++){
+            tmp_parent_block_idx = (*it)->get_block_idx();
+            tmp_parent_thread_idx = (*it)->get_thread_idx();
+            m_parent_kernel->block_state[tmp_parent_block_idx].thread.set(tmp_parent_thread_idx);
+            fprintf(stdout, "DCC: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx, tmp_parent_thread_idx);
+         }
+         if(m_parent_kernel->parent_child_dependency) {
             if(m_parent_kernel->block_state[tmp_parent_block_idx].thread.all()){
                m_parent_kernel->block_state[tmp_parent_block_idx].switched = 0;
-                          fprintf(stdout, "DCC: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx);
+               fprintf(stdout, "DCC: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx);
             }
-         }else{
-            m_parent_kernel->block_state[m_parent_block_idx].thread.set(m_parent_thread_idx);
-            fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
+         }
+      }else if(!g_agg_blocks_support){
+         m_parent_kernel->block_state[m_parent_block_idx].thread.set(m_parent_thread_idx);
+         fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
+         if(m_parent_kernel->parent_child_dependency) {
             if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
                //m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
                m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
-            fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+               fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
             }
          }
       }
