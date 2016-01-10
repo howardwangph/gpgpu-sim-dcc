@@ -543,6 +543,8 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       break;
    }
 
+   if(target_size != -1 && total_thread_1 > target_size) return false; //enough thread for a child kernel, merge is unnecessary
+
    unsigned remaining_count = 0;
 
    if(continous_offset || ForceMerge){
@@ -597,19 +599,25 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       for( it = kd_entry_2->kernel_grid->m_param_mem_map.begin(); it != kd_entry_2->kernel_grid->m_param_mem_map.end(); it++ ){
          if (!split){
             offset = it->first + total_thread_1;
-            if( target_size != -1 && offset > target_size ) { //boundary parameter buffer -> duplicate
-               boundary = true;
-               for(unsigned n = 0; n < kernel_param_size; n += 4) {
-                  unsigned int oneword;
-                  it->second->read((size_t) n, 4, &oneword);
-                  new_mspace->write((size_t) n, 4, &oneword, NULL, NULL); 
-               }
-               split_size = offset - target_size;
-               DEV_RUNTIME_REPORT("DCC pre-split: found boundary, set new param mem offset at " << split_size);
-               new_mspace->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
-               new_map[split_size] = new_mspace;
-            }
             DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
+            if( target_size != -1 ){
+               if(offset > target_size) { //boundary parameter buffer -> duplicate
+                  boundary = true;
+                  for(unsigned n = 0; n < kernel_param_size; n += 4) {
+                     unsigned int oneword;
+                     it->second->read((size_t) n, 4, &oneword);
+                     new_mspace->write((size_t) n, 4, &oneword, NULL, NULL); 
+                  }
+                  split_size = offset - target_size;
+                  DEV_RUNTIME_REPORT("DCC pre-split: found boundary, set new param mem offset at " << split_size);
+                  new_mspace->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
+                  new_map[split_size] = new_mspace;
+               }else if(offset == target_size){ //exact boundary
+                  DEV_RUNTIME_REPORT("DCC pre-split: found exact boundary");
+                  split = true;
+               }
+            }
+//            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
             it->second->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
             kd_entry_1->kernel_grid->m_param_mem_map[offset] = it->second;
          } else { // splitted -> modifying parameter memory maps
@@ -1126,7 +1134,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                   if(g_app_name == BFS || g_app_name == AMR || g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA ||
                     (g_app_name == PAGERANK && it->kernel_grid->name().find(pr_k1) != std::string::npos) || 
                     (g_app_name == MIS && it->kernel_grid->name().find(mis_k2) != std::string::npos) ) {
-                     enough_threads = (g_dyn_child_thread_consolidation_version == 2) ? (pending_child_threads > it->optimal_kernel_size) : (pending_child_threads > it->optimal_block_size);
+                     enough_threads = (g_dyn_child_thread_consolidation_version >= 2) ? (pending_child_threads > it->optimal_kernel_size) : (pending_child_threads > it->optimal_block_size);
                      if(no_more_kernel && enough_threads){
                         found_target_entry = true;
                         switch(g_dyn_child_thread_consolidation_version){
@@ -1136,8 +1144,9 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                         case 1: // issue a new kernel with as many blocks as possible
                            target_merge_size = pending_child_threads - (pending_child_threads % it->optimal_block_size);
                            break;
-                        case 2: // issue a new kernel with optimal kernel size (exact size that can fill up the whole GPU)
-                           target_merge_size = it->optimal_kernel_size;
+                        case 2: // issue a new kernel with optimal kernel size (minimum size that can fill up the whole GPU)
+                           target_merge_size = pending_child_threads - (pending_child_threads % it->optimal_block_size);
+                           //target_merge_size = it->optimal_kernel_size;
                         default:
                            break;
                         }
