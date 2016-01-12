@@ -409,7 +409,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       if( offset_a_1 + total_thread_1 == offset_a_2 ){
          if(found1 != std::string::npos){ //kernel mis1
             DEV_RUNTIME_REPORT("DCC: MIS1 continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
-         } else if(found2 != std::string::npos){ //kernel mis1
+         } else if(found2 != std::string::npos){ //kernel mis2
             DEV_RUNTIME_REPORT("DCC: MIS2 continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
          }
          continous_offset = true;
@@ -417,7 +417,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       total_thread_offset = 4;
       if(found1 != std::string::npos){ //kernel mis1
          kernel_param_size = 40;
-      } else if(found2 != std::string::npos){ //kernel mis1
+      } else if(found2 != std::string::npos){ //kernel mis2
          kernel_param_size = 32;
       }
       break;
@@ -778,7 +778,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
          }
       }
 
-      if(split){
+      if(split && remaining){
          //new_map[split_size] = new_mspace;
          kd_entry_2->kernel_grid->m_param_mem_map.clear();
          for(it=new_map.begin(); it!=new_map.end(); it++){
@@ -802,7 +802,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             kd_entry_1->kernel_grid->add_parent(kd_entry_2->kernel_grid->get_parent(), kd_entry_2->kernel_grid->m_parent_threads.front());
             kd_entry_2->kernel_grid->m_parent_threads.pop_front();
          }
-         kd_entry_1->kernel_grid->get_parent()->remove_child(kd_entry_2->kernel_grid);
+         kd_entry_2->kernel_grid->get_parent()->remove_child(kd_entry_2->kernel_grid);
       } else {
          std::list<ptx_thread_info *>::iterator mpt_it;
          for(mpt_it = kd_entry_2->kernel_grid->m_parent_threads.begin(); mpt_it != kd_entry_2->kernel_grid->m_parent_threads.end(); mpt_it++){
@@ -1011,7 +1011,9 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                break;
             } else if( kd_entry_2->valid == false || kd_entry_2->launched == true ) {
                continue;
-            } else if( kd_entry_1 != kd_entry_2 && !kd_entry_1->kernel_grid->name().compare(kd_entry_2->kernel_grid->name()) ){
+            } else if( kd_entry_1 != kd_entry_2 && 
+              !kd_entry_1->kernel_grid->name().compare(kd_entry_2->kernel_grid->name()) && 
+              kd_entry_1->kernel_grid->get_parent() == kd_entry_2->kernel_grid->get_parent() ){
                //different child kernel, check if they can merge
                bool remained;
                bool merged = merge_two_kernel_distributor_entry( &(*kd_entry_1), &(*kd_entry_2), false, -1, remained );
@@ -1198,7 +1200,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
          if(g_cuda_dcc_kernel_distributor.size() > 1){
             std::list<dcc_kernel_distributor_t>::iterator it2;
             for(it2=g_cuda_dcc_kernel_distributor.begin(); it2!=g_cuda_dcc_kernel_distributor.end(); it2++){
-               if(it2->valid && it2!=it && !it->kernel_grid->name().compare(it2->kernel_grid->name())){ //valid and different
+               if( (it2->valid) && (it2!=it) && (!it->kernel_grid->name().compare(it2->kernel_grid->name())) && (it->kernel_grid->get_parent() == it2->kernel_grid->get_parent()) ){ //valid and different
                   if( launch_mode == PARENT_BLOCK_SYNC && (it2->kernel_grid->m_parent_threads.front())->get_block_idx() != sync_parent_thread->get_block_idx() ) { //additional constraint
                      continue;
                   }
