@@ -519,6 +519,7 @@ void gpgpu_sim::launch( kernel_info_t *kinfo )
 			break;
 		}
 	}
+	print_running_kernels_stats();
 	assert(n < m_running_kernels.size());
 }
 
@@ -668,6 +669,7 @@ void gpgpu_sim::set_kernel_done( kernel_info_t *kernel )
 			break;
 		}
 	}
+	print_running_kernels_stats();
 	assert( k != m_running_kernels.end() ); 
 }
 
@@ -810,6 +812,9 @@ bool gpgpu_sim::active()
 		return true;
 	if( get_more_cta_left() )
 		return true;
+	for(unsigned i = 0; i < m_running_kernels.size(); i++)
+           if( m_running_kernels[i] ) //m_running_kernels has kernels left --> must be preempted --> still active
+              return true;
 	extern std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
 	if( !g_cuda_dcc_kernel_distributor.empty() ){
 		printf("GPGPU-Sim remains active since there are %d child kernels remaining.\n", g_cuda_dcc_kernel_distributor.size());
@@ -1360,11 +1365,17 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 	assert( free_cta_hw_id!=(unsigned)-1 );
 
 	// dekline
-	get_hw2global()[free_cta_hw_id] = global_cta_id;
+//	get_hw2global()[free_cta_hw_id] = global_cta_id;
+//	get_global2hw()[global_cta_id] = free_cta_hw_id;
 	
-	unsigned idx = get_hw2global()[free_cta_hw_id];
+	unsigned idx = global_cta_id; /*get_hw2global()[free_cta_hw_id];*/
 	kernel.block_state[idx].issued = 1;
 	// ---
+        
+        // CDP parent-child dependency
+	kernel.block_state[idx].cluster_id = m_tpc;
+	kernel.block_state[idx].shader_id = m_config->sid_to_cid(m_sid);  
+	kernel.block_state[idx].hw_cta_id = free_cta_hw_id;
 
 	int cta_size = kernel.threads_per_cta();
 	int padded_cta_size = cta_size; 
@@ -1483,14 +1494,17 @@ void shader_core_ctx::issue_block2core( kernel_info_t &kernel )
 	}
 	assert( free_cta_hw_id!=(unsigned)-1 );
 	// dekline
-	get_hw2global()[free_cta_hw_id] = kernel.find_block_idx(kernel.get_next_cta_id());
+	unsigned idx = kernel.find_block_idx(kernel.get_next_cta_id());
+//	get_hw2global()[free_cta_hw_id] = global_cta_id;
+//	get_global2hw()[global_cta_id] = free_cta_hw_id;
 	
-	unsigned idx = get_hw2global()[free_cta_hw_id];
+//	unsigned idx = get_hw2global()[free_cta_hw_id];
 	kernel.block_state[idx].issued = 1;
 
         // CDP parent-child dependency
 	kernel.block_state[idx].cluster_id = m_tpc;
 	kernel.block_state[idx].shader_id = m_config->sid_to_cid(m_sid);  
+	kernel.block_state[idx].hw_cta_id = free_cta_hw_id;
 	// ---
 
 	// determine hardware threads and warps that will be used for this CTA
@@ -1592,7 +1606,8 @@ void gpgpu_sim::issue_block2core()
                  if ( kernel->block_state[b_idx].switched && 
                    !kernel->block_state[b_idx].preempted){ // switching this cta
                     if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-//                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, b_idx);
+                       fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
+                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
                     }else{
 //                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
                     }
@@ -1604,6 +1619,7 @@ void gpgpu_sim::issue_block2core()
               // issue the switched blocks
               for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
                  if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
+                    fprintf(stdout, "CDP: [%d, %d] -- context-switch back\n", kernel->get_uid(), b_idx);
                     m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
                     break;
                  }

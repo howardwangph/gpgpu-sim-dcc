@@ -140,7 +140,12 @@ void *gpgpu_sim_thread_concurrent(void*)
 		g_the_gpu->cycle();
 		sim_cycles = true;
 		g_the_gpu->deadlock_check();
-	    }
+	    } else {
+	       if(g_debug_execution >= 3){
+                  printf("GPGPU-Sim: ** gpu is inactive!! **\n");
+                  fflush(stdout);
+               }
+            }
 	    active=g_the_gpu->active() || !g_stream_manager->empty_protected();
 	} while( active );
 	if(g_debug_execution >= 3) {

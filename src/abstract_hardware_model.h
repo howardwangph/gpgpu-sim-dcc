@@ -159,7 +159,7 @@ enum _memory_op_t {
 
 // dekline
 typedef std::bitset<64> warp_set_t;
-typedef std::bitset<1536> thread2block;
+typedef std::bitset<2048/*1536*/> thread2block;
 
 #if !defined(__VECTOR_TYPES_H__)
 struct dim3 {
@@ -207,7 +207,7 @@ struct block_info {
 	// global id of this block
 	dim3 block_id;
 
-	unsigned cluster_id, shader_id;
+	unsigned cluster_id, shader_id, hw_cta_id;
 	bool devsynced;
 };
 
@@ -266,7 +266,7 @@ class kernel_info_t {
 		bool running() const { return m_num_cores_running>0; }
 		bool done() const 
 		{
-			return no_more_ctas_to_run() && !running();
+			return no_more_ctas_to_run() && !running() && switched_done();
 		}
 		class function_info *entry() { return m_kernel_entry; }
 		const class function_info *entry() const { return m_kernel_entry; }
@@ -395,7 +395,7 @@ class kernel_info_t {
 
 		// dekline
 		struct block_info *block_state;
-		bool switched_done();
+		bool switched_done() const;
 		unsigned find_block_idx( dim3 block_id );
 		void reset_block_state(); //Po-Han DCC
 		bool parent_child_dependency;

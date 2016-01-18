@@ -432,8 +432,8 @@ public:
 	for(n=0; n < m_running_kernels.size(); n++ ) {
 		if(m_running_kernels[n]){
 		   printf("%d, %d, %d, %d\n", n, m_running_kernels[n]->get_uid(), m_running_kernels[n]->running(), m_running_kernels[n]->no_more_ctas_to_run());
-		}else{
-		   printf("%d, , , \n", n);
+//		}else{
+//		   printf("%d, , , \n", n);
                 }
         }
     }

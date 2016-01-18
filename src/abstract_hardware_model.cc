@@ -669,10 +669,10 @@ void kernel_info_t::reset_block_state()
 
 // dekline
 // check if all switched out CTA are finished
-bool kernel_info_t::switched_done()
+bool kernel_info_t::switched_done() const
 {
-    for ( unsigned i=0; i<(unsigned)m_grid_dim.x * m_grid_dim.y * m_grid_dim.z; i++ ) {
-	if (block_state[i].switched && !block_state[i].done)	    
+    for ( unsigned i=0; i<num_blocks()/*(unsigned)m_grid_dim.x * m_grid_dim.y * m_grid_dim.z*/; i++ ) {
+	if (block_state[i].preempted/*switched*/ && !block_state[i].done)	    
 	    return false;
     }
 
@@ -781,9 +781,14 @@ void kernel_info_t::notify_parent_finished() {
          fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
          if(m_parent_kernel->parent_child_dependency) {
             if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
-               //m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
-               m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
-               fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+               if(m_parent_kernel->block_state[m_parent_block_idx].preempted){ //preempted --> re-issue it
+                  m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
+                  fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block preempteded --> re-issue it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+               }else{ //not yet preempted --> mark-off the switch bit
+                  m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
+                  fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+               }
+//               fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
             }
          }
       }

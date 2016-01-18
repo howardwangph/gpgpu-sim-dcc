@@ -1826,10 +1826,11 @@ class shader_core_ctx : public core_t {
 		unsigned m_sid; // shader id
 		unsigned m_cta_status[MAX_CTA_PER_SHADER]; // CTAs status 
 		std::vector<shd_warp_t>   m_warp;   // per warp information array
-		void register_cta_thread_exit(unsigned cta_num, kernel_info_t * kernel );
+		void register_cta_thread_exit(unsigned cta_num, unsigned idx, kernel_info_t * kernel, bool real );
 		unsigned m_not_completed; // number of threads to be completed (==0 when all thread on this core completed) 
 		std::bitset<MAX_THREAD_PER_SM> m_active_threads;
 		std::map<unsigned, unsigned>& get_hw2global(){return m_hw2global;};
+		std::map<unsigned, unsigned>& get_global2hw(){return m_global2hw;};
 		class simt_core_cluster *m_cluster;
 		// thread contexts 
 		thread_ctx_t             *m_threadState;
@@ -1928,6 +1929,7 @@ class shader_core_ctx : public core_t {
 		
 		//Andrew
 		std::map<unsigned, unsigned> m_hw2global;
+                std::map<unsigned, unsigned> m_global2hw;
 
 		//Jin: concurrent kernels on a sm
 	public:
@@ -1935,13 +1937,14 @@ class shader_core_ctx : public core_t {
 		bool occupy_shader_resource_1block(kernel_info_t & kernel, bool occupy);
 		void release_shader_resource_1block(unsigned hw_ctaid, kernel_info_t & kernel);
 		int find_available_hwtid(unsigned int cta_size, bool occupy);
+		std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid; 
 	private:
 		unsigned int m_occupied_n_threads; 
 		unsigned int m_occupied_shmem; 
 		unsigned int m_occupied_regs;
 		unsigned int m_occupied_ctas;
 		std::bitset<MAX_THREAD_PER_SM> m_occupied_hwtid;
-		std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid; 
+//		std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid; 
 
 		//Jin: shader occupancy stats
 	public:
@@ -2009,7 +2012,7 @@ class simt_core_cluster {
 		// dekline
 		shader_core_ctx **m_core;
 		unsigned m_cluster_id;
-		void switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id );
+		void switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id );
 
 	private:
 		gpgpu_sim *m_gpu;

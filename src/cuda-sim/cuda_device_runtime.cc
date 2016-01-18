@@ -1238,11 +1238,15 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
    unsigned parent_block_idx = thread->get_block_idx();
    std::list<dcc_kernel_distributor_t>::iterator it;
    bool has_child_kernels = false;
-   for(it=g_cuda_dcc_kernel_distributor.begin(); it!=g_cuda_dcc_kernel_distributor.end(); it++){
-      if((it->kernel_grid->m_parent_threads.front())->get_block_idx() == parent_block_idx){
-         has_child_kernels = true;
-         break;
+   if(g_dyn_child_thread_consolidation){
+      for(it=g_cuda_dcc_kernel_distributor.begin(); it!=g_cuda_dcc_kernel_distributor.end(); it++){
+         if((it->kernel_grid->m_parent_threads.front())->get_block_idx() == parent_block_idx){
+            has_child_kernels = true;
+            break;
+         }
       }
+   }else{
+      has_child_kernels = true;
    }
    /* Parent-child dependency */
    if(/*!thread->get_kernel().block_state[parent_block_idx].devsynced &&*/ has_child_kernels){

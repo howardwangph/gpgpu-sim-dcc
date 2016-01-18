@@ -643,9 +643,9 @@ void ptx_instruction::set_opcode_and_latency()
 			&cdp_latency[3],&cdp_latency[4],&cdp_latency[5]);
 
 	//Po-Han DCC: change the cdp latency if dynamic child-thread consolidation is enabled
-	if(g_dyn_child_thread_consolidation){
+/*	if(g_dyn_child_thread_consolidation){
 		cdp_latency[1]=cdp_latency[2]=cdp_latency[3]=cdp_latency[4]=0;
-	}
+	}*/
 
 	if(!m_operands.empty()){
 		std::vector<operand_info>::iterator it;
