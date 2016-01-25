@@ -15,6 +15,8 @@
 #include "cuda_device_runtime.h"
 #include "../agg_block_group.h"
 
+#define MAX_PARAM_BUFFER_SIZE 32768
+
 #define DEV_RUNTIME_REPORT(a) \
   if( g_debug_execution ) { \
      std::cout << __FILE__ << ", " << __LINE__ << ": " << a << "\n"; \
@@ -128,8 +130,26 @@ bool g_dyn_child_thread_consolidation = false;
 unsigned g_dyn_child_thread_consolidation_version = 0;
 unsigned g_dcc_timeout_threshold = 0;
 unsigned pending_child_threads = 0;
+unsigned long long param_buffer_size = 0, param_buffer_usage = 0;
+unsigned kernel_param_usage = 0;
+static const unsigned per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
+static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 23296, 9984, -1, -1, -1, -1, -1, -1};
+//static const unsigned per_kernel_parent_block_cnt[10] = {3, -1, 2, 3, -1, -1, -1, -1, -1, -1};
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
+bool param_buffer_full = false;
+#if 0
+std::string bfs_parent_k("bfsCdpExpandKernel");
+std::string join_parent_k("joinCdpMainJoinKernel");
+std::string sssp_parent_k("ssspCdpExpandKernel");
+std::string mis_parent_k1("mis1");
+std::string mis_parent_k2("mis2");
+std::string pr_parent_k1("inicsr");
+std::string pr_parent_k2("spmv_csr_scalar_kernel");
+std::string kmeans_parent_k("kmeansPoint");
+std::string bc_parent_k1("bfs_kernel");
+std::string bc_parent_k2("backtrack_kernel");
+#endif
 std::string pr_k1("inicsr_CdpKernel");
 std::string pr_k2("spmv_csr_scalar_CdpKernel");
 std::string bc_k1("bfs_CdpKernel");
@@ -200,8 +220,21 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
    if( g_dyn_child_thread_consolidation ){
       // Po-Han: DCC implementation, allocate child kernel parameters in another memory space
       param_buffer = thread->get_gpu()->dcc_param_malloc(child_kernel_arg_size);
-      g_total_param_size += child_kernel_arg_size; 
       DEV_RUNTIME_REPORT("DCC: child kernel arg pre-allocation: size " << child_kernel_arg_size << ", parameter buffer allocated at " << param_buffer);
+      //g_total_param_size += child_kernel_arg_size; 
+      kernel_param_usage = per_kernel_param_usage[g_app_name];
+      if(child_kernel_entry->get_name().find(mis_k1) != std::string::npos || (child_kernel_entry->get_name().find(pr_k2) != std::string::npos))
+         kernel_param_usage += 8;
+      param_buffer_usage += kernel_param_usage;
+      if( (float)param_buffer_usage > (float)MAX_PARAM_BUFFER_SIZE * 0.8){
+//         param_buffer_full = true;
+         DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds 80% (size = " << MAX_PARAM_BUFFER_SIZE << "), preemptly issue child kernels.");
+         launch_one_device_kernel(true, NULL, NULL);
+      }
+      if(param_buffer_usage > param_buffer_size){
+         param_buffer_size = param_buffer_usage;
+         DEV_RUNTIME_REPORT("DCC: maximum parameter buffer usage = " << param_buffer_size);
+      }
    } else {
       param_buffer = thread->get_gpu()->gpu_malloc(child_kernel_arg_size);
       g_total_param_size += ((child_kernel_arg_size + 255) / 256 * 256);
@@ -1028,6 +1061,11 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                }
             }
          }
+      }
+      if(pending_child_threads > per_kernel_optimal_child_size[g_app_name]){
+//         param_buffer_full = false;
+         DEV_RUNTIME_REPORT("DCC: enough child threads (" << per_kernel_optimal_child_size[g_app_name] << "), issue child kernels to reduce param buffer size.");
+         launch_one_device_kernel(true, NULL, NULL);
       }
    }
 }

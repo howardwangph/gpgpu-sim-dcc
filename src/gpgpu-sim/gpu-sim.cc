@@ -65,6 +65,19 @@
 //dekline
 #include "../cuda-sim/ptx_ir.h"
 
+/* DCC restrict concurrent block count for parent kernel */
+static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 2, 3, 0, 0, 0, 0, 0, 0};
+std::string bfs_parent_k("bfsCdpExpandKernel");
+std::string join_parent_k("joinCdpMainJoinKernel");
+std::string sssp_parent_k("ssspCdpExpandKernel");
+std::string mis_parent_k1("mis1");
+std::string mis_parent_k2("mis2");
+std::string pr_parent_k1("inicsr");
+std::string pr_parent_k2("spmv_csr_scalar_kernel");
+std::string kmeans_parent_k("kmeansPoint");
+std::string bc_parent_k1("bfs_kernel");
+std::string bc_parent_k2("backtrack_kernel");
+
 #ifdef GPGPUSIM_POWER_MODEL
 #include "power_interface.h"
 #else
@@ -516,9 +529,21 @@ void gpgpu_sim::launch( kernel_info_t *kinfo )
 	for(n=0; n < m_running_kernels.size(); n++ ) {
 		if( (NULL==m_running_kernels[n]) || m_running_kernels[n]->done() ) {
 			m_running_kernels[n] = kinfo;
+			/* DCC: give child higher priority to reduce the size of parameter buffer*/
+			if(g_dyn_child_thread_consolidation && kinfo->is_child){
+			   fprintf(stdout, "DCC: give child higher priority to reduce the size of param buffer\n");
+			   m_last_issued_kernel = n;
+                        }
 			break;
 		}
 	}
+	kinfo->per_SM_block_cnt = new unsigned*[m_config.num_shader()];
+	for( unsigned i = 0; i < m_config.num_shader(); i++){
+	   kinfo->per_SM_block_cnt[i] = new unsigned[m_shader_config->n_simt_cores_per_cluster];
+	   for( unsigned j = 0; j < m_shader_config->n_simt_cores_per_cluster; j++){
+	      kinfo->per_SM_block_cnt[i][j] = 0;
+           }
+        }
 	print_running_kernels_stats();
 	assert(n < m_running_kernels.size());
 }
@@ -550,39 +575,39 @@ bool gpgpu_sim::get_more_cta_left() const
   return a.thread_count > b.thread_count;
   }*/
 
-kernel_info_t *gpgpu_sim::select_kernel()
-{
-	if(m_running_kernels[m_last_issued_kernel] &&
-			!m_running_kernels[m_last_issued_kernel]->no_more_ctas_to_run()) {
-		unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
-		if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
-			m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
-			m_executed_kernel_uids.push_back(launch_uid); 
-			m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
-		}
-		return m_running_kernels[m_last_issued_kernel];
-	}
+kernel_info_t *gpgpu_sim::select_kernel(){
+   if(m_running_kernels[m_last_issued_kernel] && !m_running_kernels[m_last_issued_kernel]->no_more_ctas_to_run()) {
+      unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
+      if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
+         m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+         m_executed_kernel_uids.push_back(launch_uid); 
+         m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
+      }
+      return m_running_kernels[m_last_issued_kernel];
+   }
 
-	for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
-		unsigned idx = (n+m_last_issued_kernel+1)%m_config.max_concurrent_kernel;
-		if( m_running_kernels[idx] && !m_running_kernels[idx]->no_more_ctas_to_run() ) {
-			m_last_issued_kernel=idx;
-			m_running_kernels[idx]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
-			// record this kernel for stat print if it is the first time this kernel is selected for execution  
-			unsigned launch_uid = m_running_kernels[idx]->get_uid(); 
-			assert(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end());
-			m_executed_kernel_uids.push_back(launch_uid); 
-			m_executed_kernel_names.push_back(m_running_kernels[idx]->name()); 
+   for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
+      unsigned idx = (n+m_last_issued_kernel+1)%m_config.max_concurrent_kernel;
+      if( m_running_kernels[idx] && !m_running_kernels[idx]->no_more_ctas_to_run() ) {
+         m_last_issued_kernel=idx;
+         m_running_kernels[idx]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+         // record this kernel for stat print if it is the first time this kernel is selected for execution  
+         unsigned launch_uid = m_running_kernels[idx]->get_uid(); 
+         //			assert(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end());
+         if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
+            m_executed_kernel_uids.push_back(launch_uid); 
+            m_executed_kernel_names.push_back(m_running_kernels[idx]->name()); 
+         }
 
-			return m_running_kernels[idx];
-		}
-	}
+         return m_running_kernels[idx];
+      }
+   }
 
-	//Po-Han DCC: no more kernels --> launch a child kernel in the kernel distributor
-	//    if(g_dyn_child_thread_consolidation && can_start_kernel()) {
-	//        launch_one_device_kernel();
-	/*	extern std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
-		if ( !g_cuda_dcc_kernel_distributor.empty() ){
+   //Po-Han DCC: no more kernels --> launch a child kernel in the kernel distributor
+   //    if(g_dyn_child_thread_consolidation && can_start_kernel()) {
+   //        launch_one_device_kernel();
+   /*	extern std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
+        if ( !g_cuda_dcc_kernel_distributor.empty() ){
 		if( g_cuda_dcc_kernel_distributor.size() > 1 )
 		g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry);
 		std::list<dcc_kernel_distributor_t>::iterator it;
@@ -1268,8 +1293,28 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 		return false;
 	
 	/* Po-Han DCC: restrict number of parent blocks issued to a SM to reserve resources for child kernels. */
-	extern application_id g_app_name;
-	if(g_restrict_parent_block_count && !k.is_child){
+	extern application_id g_app_name;	
+	unsigned parent_limit = 0;
+	if(g_dyn_child_thread_consolidation /*g_restrict_parent_block_count*/ && !k.is_child){
+	   if(k.name().find(bfs_parent_k) != std::string::npos ||
+	     k.name().find(join_parent_k) != std::string::npos || 
+	     k.name().find(sssp_parent_k) != std::string::npos ||
+	     k.name().find(mis_parent_k1) != std::string::npos ||
+	     k.name().find(pr_parent_k1) != std::string::npos ||
+	     k.name().find(bc_parent_k1) != std::string::npos ||
+	     k.name().find(kmeans_parent_k) != std::string::npos ){
+	      parent_limit = per_kernel_parent_block_cnt[g_app_name];
+           } else if (k.name().find(mis_parent_k2) != std::string::npos) {
+              parent_limit = per_kernel_parent_block_cnt[g_app_name];
+           } else if (k.name().find(pr_parent_k2) != std::string::npos) {
+              parent_limit = 0;
+           } else if (k.name().find(bc_parent_k2) != std::string::npos) {
+              parent_limit = 0;
+           }
+           if( parent_limit != 0 && k.per_SM_block_cnt[m_tpc][m_config->sid_to_cid(m_sid)] >= parent_limit ){
+              return false;
+           }
+#if 0
 	   occupied_thread_percentage = (float)m_occupied_n_threads / m_config->n_thread_per_shader;
 	   occupied_shmem_percentage = (float)m_occupied_shmem / m_config->gpgpu_shmem_size;
 	   occupied_reg_percentage = (float)m_occupied_regs / m_config->gpgpu_shader_registers;
@@ -1283,10 +1328,11 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 	       occupied_shmem_percentage + newblock_shmem_percentage > 0.85 || 
 	       occupied_reg_percentage + newblock_reg_percentage > 0.85 ){
 //	      printf("GPGPU-Sim uArch: Prevent kernel %d(%0.3f, %0.3f, %0.3f) from issuing, (%0.3f, %0.3f, %0.3f) resource occupied.\n", k.get_uid(), newblock_thread_percentage, newblock_shmem_percentage, newblock_reg_percentage, occupied_thread_percentage, occupied_shmem_percentage, occupied_reg_percentage);
-	      if(g_app_name >= 4 && g_app_name < 8){
+//	      if(g_app_name >= 4 && g_app_name < 8){
                  return false;
-              }
+//              }
            }
+#endif
 	}
 
 	if(occupy) {
@@ -1505,6 +1551,9 @@ void shader_core_ctx::issue_block2core( kernel_info_t &kernel )
 	kernel.block_state[idx].cluster_id = m_tpc;
 	kernel.block_state[idx].shader_id = m_config->sid_to_cid(m_sid);  
 	kernel.block_state[idx].hw_cta_id = free_cta_hw_id;
+	// ---
+	// Control concurrent block count for parent kernel
+	kernel.per_SM_block_cnt[kernel.block_state[idx].cluster_id][kernel.block_state[idx].shader_id]++;
 	// ---
 
 	// determine hardware threads and warps that will be used for this CTA
@@ -1826,11 +1875,12 @@ void gpgpu_sim::cycle()
 			launch_one_device_kernel(true, NULL, NULL);
 		} else {
 			unsigned n;
-			bool no_more_kernel = false;
+			bool no_more_kernel = true;
 			for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
 				unsigned idx = (n+m_last_issued_kernel+1)%m_config.max_concurrent_kernel;
-				if( m_running_kernels[idx] && !m_running_kernels[idx]->no_more_ctas_to_run() ) {
-					no_more_kernel = true;
+				if( (NULL != m_running_kernels[idx]) && !m_running_kernels[idx]->no_more_ctas_to_run() ) {
+					no_more_kernel = false;
+					break;
 				}
 			}
 

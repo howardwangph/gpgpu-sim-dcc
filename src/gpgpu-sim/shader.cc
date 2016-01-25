@@ -2062,6 +2062,8 @@ void shader_core_ctx::register_cta_thread_exit( unsigned cta_num, unsigned idx, 
 		//Jin: for concurrent kernels on sm
 		release_shader_resource_1block(cta_num, *kernel);
 		kernel->dec_running();
+		kernel->per_SM_block_cnt[m_tpc][m_config->sid_to_cid(m_sid)]--;
+		assert(kernel->per_SM_block_cnt[m_tpc][m_config->sid_to_cid(m_sid)]>=0);
 		if( kernel->no_more_ctas_to_run() ) {
 			if( !kernel->running() /*&& real*/ ) {
 				printf("GPGPU-Sim uArch: GPU detected kernel %u \'%s\' finished on shader %u.\n", kernel->get_uid(),

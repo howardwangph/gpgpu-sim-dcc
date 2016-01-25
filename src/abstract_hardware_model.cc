@@ -593,6 +593,7 @@ kernel_info_t::kernel_info_t( dim3 gridDim, dim3 blockDim, class function_info *
 
     //Po-Han: DCC
     is_child = false;
+    param_entry_cnt = 0;
     parent_child_dependency = false;
     end_cycle = 0;
     // dekline

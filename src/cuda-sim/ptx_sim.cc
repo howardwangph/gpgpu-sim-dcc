@@ -200,9 +200,16 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
    extern bool g_dyn_child_thread_consolidation;
    if(g_dyn_child_thread_consolidation && m_kernel.is_child){
       std::map<unsigned int, class memory_space *>::iterator it;
-      for( it = m_kernel.m_param_mem_map.begin(); it != m_kernel.m_param_mem_map.end(); it++ ){
+      unsigned cnt;
+      for( it = m_kernel.m_param_mem_map.begin(), cnt = 0; it != m_kernel.m_param_mem_map.end(); it++, cnt++ ){
          if (global_tid < it->first )
 	    break;
+      }
+      if(cnt > m_kernel.param_entry_cnt){
+         m_kernel.param_entry_cnt = cnt;
+         extern unsigned kernel_param_usage;
+         extern unsigned long long param_buffer_usage;
+         param_buffer_usage -= kernel_param_usage;
       }
       if( it == m_kernel.m_param_mem_map.end() )
          it = m_kernel.m_param_mem_map.begin();
