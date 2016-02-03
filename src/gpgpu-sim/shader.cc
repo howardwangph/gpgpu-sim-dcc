@@ -665,7 +665,13 @@ void shader_core_ctx::fetch()
 				unsigned preempted = m_thread[warp_id * 32]->m_kernel.block_state[global_cta_id].preempted;
 				unsigned issuable = (gpu_sim_cycle>=m_thread[warp_id * 32]->m_kernel.block_state[global_cta_id].time_stamp_switching_issue) ? 1:0;
 
-				if( (!preempted && !switched) || (preempted && issuable) ) {
+                                /* not fetching parent threads if param buffer is full */
+				extern bool param_buffer_full; 
+                                extern std::list<int> target_parent_list;
+                                bool buf_full_stall = (std::find(target_parent_list.begin(), target_parent_list.end(), m_thread[warp_id * 32]->m_kernel.get_uid()) != target_parent_list.end()) ? true : false;
+                                buf_full_stall &= param_buffer_full;
+
+				if( !buf_full_stall && ((!preempted && !switched) || (preempted && issuable)) ) {
 					address_type pc  = m_warp[warp_id].get_pc();
 					address_type ppc = pc + PROGRAM_MEM_START;
 					unsigned nbytes=16; 

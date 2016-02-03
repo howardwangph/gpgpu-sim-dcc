@@ -15,7 +15,7 @@
 #include "cuda_device_runtime.h"
 #include "../agg_block_group.h"
 
-#define MAX_PARAM_BUFFER_SIZE 32768
+//#define MAX_PARAM_BUFFER_SIZE 32768
 
 #define DEV_RUNTIME_REPORT(a) \
   if( g_debug_execution ) { \
@@ -138,6 +138,8 @@ static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 23296, 9
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
 bool param_buffer_full = false;
+extern unsigned g_max_param_buffer_size;
+std::list<int> target_parent_list;
 #if 0
 std::string bfs_parent_k("bfsCdpExpandKernel");
 std::string join_parent_k("joinCdpMainJoinKernel");
@@ -226,9 +228,9 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
       if(child_kernel_entry->get_name().find(mis_k1) != std::string::npos || (child_kernel_entry->get_name().find(pr_k2) != std::string::npos))
          kernel_param_usage += 8;
       param_buffer_usage += kernel_param_usage;
-      if( (float)param_buffer_usage > (float)MAX_PARAM_BUFFER_SIZE * 0.8){
-//         param_buffer_full = true;
-         DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds 80% (size = " << MAX_PARAM_BUFFER_SIZE << "), preemptly issue child kernels.");
+      if( (float)param_buffer_usage > (float)g_max_param_buffer_size * 0.8){
+         param_buffer_full = true;
+         DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds 80% (size = " << g_max_param_buffer_size << "), preemptly issue child kernels.");
          launch_one_device_kernel(true, NULL, NULL);
       }
       if(param_buffer_usage > param_buffer_size){
@@ -280,6 +282,15 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
       DEV_RUNTIME_REPORT("DCC: preallocate child kernel at kernel distributor by " << parent_grid.name() << ", cta (" <<
         thread->get_ctaid().x << ", " << thread->get_ctaid().y << ", " << thread->get_ctaid().z <<
         "), thread (" << thread->get_tid().x << ", " << thread->get_tid().y << ", " << thread->get_tid().z << ")");
+      
+      /* modify target_parent_list to block the execution of parent warps if necessary */
+      if(param_buffer_full){
+         target_parent_list.push_back(parent_grid.get_uid());
+      } else {
+//         if(target_parent_list.find(parend_grid.get_uid()) != target_parent_list.end()){
+            target_parent_list.remove(parent_grid.get_uid());
+//         }
+      }
 
       // initialize the kernel distributor entry
       dcc_kernel_distributor_t distributor_entry(device_grid, total_thread_count, optimal_threads_per_block, optimal_threads_per_kernel, param_buffer);

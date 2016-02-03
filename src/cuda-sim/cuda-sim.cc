@@ -66,6 +66,7 @@ char *opcode_latency_int, *opcode_latency_fp, *opcode_latency_dp;
 char *opcode_initiation_int, *opcode_initiation_fp, *opcode_initiation_dp;
 char *cdp_latency_str;
 unsigned cdp_latency[6];
+unsigned max_param_buffer_size;
 
 void ptx_opcocde_latency_options (option_parser_t opp) {
 	option_parser_register(opp, "-ptx_opcode_latency_int", OPT_CSTR, &opcode_latency_int,

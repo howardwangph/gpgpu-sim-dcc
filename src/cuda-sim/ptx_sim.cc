@@ -206,10 +206,18 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
 	    break;
       }
       if(cnt > m_kernel.param_entry_cnt){
+         /* change param entry 
+          * --> old param entry is freed
+          * --> reclaim param buffer usage and turn-off full bit if occupance < 50% 
+          **/
          m_kernel.param_entry_cnt = cnt;
          extern unsigned kernel_param_usage;
          extern unsigned long long param_buffer_usage;
+         extern unsigned g_max_param_buffer_size;
+         extern bool param_buffer_full; 
          param_buffer_usage -= kernel_param_usage;
+         if((float)param_buffer_usage < (float)g_max_param_buffer_size * 0.5)
+            param_buffer_full = false;
       }
       if( it == m_kernel.m_param_mem_map.end() )
          it = m_kernel.m_param_mem_map.begin();

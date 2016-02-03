@@ -77,6 +77,7 @@ std::string pr_parent_k2("spmv_csr_scalar_kernel");
 std::string kmeans_parent_k("kmeansPoint");
 std::string bc_parent_k1("bfs_kernel");
 std::string bc_parent_k2("backtrack_kernel");
+unsigned g_max_param_buffer_size;
 
 #ifdef GPGPUSIM_POWER_MODEL
 #include "power_interface.h"
@@ -491,6 +492,9 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 	option_parser_register(opp, "-dcc_version", OPT_INT32,
 			&g_dyn_child_thread_consolidation_version, "DCC version. Default: 2",
 			"2");
+
+	option_parser_register(opp, "-max_param_buffer_size", OPT_INT32,
+	                &g_max_param_buffer_size, "On-chip kernel parameter buffer size (byte). Default: 32768", "32768");
 }
 
 /////////////////////////////////////////////////////////////////////////////
