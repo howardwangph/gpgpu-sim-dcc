@@ -2765,6 +2765,11 @@ void barrier_set_t::warp_reaches_barrier(unsigned cta_id,unsigned warp_id,warp_i
 		dump();
 		abort();
 	}
+	if(!w->second.test(warp_id)){
+		printf("Reaching warp %d in cta %d", warp_id, cta_id);
+		dump();
+		printf("\n\n");
+	}
 	assert( w->second.test(warp_id) == true ); // warp is in cta
 
 	m_bar_id_to_warps[bar_id].set(warp_id);
@@ -3448,8 +3453,33 @@ unsigned simt_core_cluster::issue_block2core() {
             }
          }
       }
+	
+	  int switch_issued = 0;
+	  for(unsigned n=0; n < m_gpu->m_running_kernels.size(); n++ ) {
+		  kernel_info_t *kernel = m_gpu->m_running_kernels[n];
+		  if(kernel && !g_dyn_child_thread_consolidation){
+			  for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+				  for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+					  if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
+						  if( kernel && m_core[core]->can_issue_1block(*kernel)) {
+							  fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: %d\n", kernel->get_uid(), b_idx, kernel);
+							  m_core[core]->switching_issue(*kernel, b_idx);
+							  num_blocks_issued++;
+							  m_cta_issue_next_core=core; 
+							  switch_issued = 1;
+							  break;
+						  }
+					  }
+				  }
+				  if (switch_issued)
+				  	break;
+			  }
+		  }
+		  if (switch_issued)
+		  	break;
+	  }
 
-      if( kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
+      if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
          m_core[core]->issue_block2core(*kernel);
          num_blocks_issued++;
          m_cta_issue_next_core=core; 
@@ -3688,9 +3718,13 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
       padded_cta_size = ((padded_cta_size/m_config->warp_size)+1)*(m_config->warp_size);
    unsigned warps_per_cta = padded_cta_size / m_config->warp_size;
 
+   unsigned start_thread = m_core[core]->m_occupied_cta_to_hwtid[preempted_cta_id];
+   unsigned warp_start_id = start_thread/m_config->warp_size;
+   unsigned warp_end_id = warp_start_id + warps_per_cta;
+
    unsigned preemptable = true;
    if(m_core[core]->m_cta_status[preempted_cta_id] > 0){
-      for(unsigned warp_id = preempted_cta_id * warps_per_cta; warp_id < (preempted_cta_id + 1) * warps_per_cta; warp_id++){
+      for(unsigned warp_id = warp_start_id; warp_id < warp_end_id; warp_id++){
          m_core[core]->m_warp[warp_id].ibuffer_flush();
          if(m_core[core]->m_warp[warp_id].stores_done() && 
            !m_core[core]->m_scoreboard->pendingWrites(warp_id) && 
@@ -3706,10 +3740,8 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
       preemptable = false;
 
    bool preemption_succeed = false;	
-//   unsigned global_cta_id = -1;
 
-   if(preemptable){
-
+   if(preemptable && kernel_1.getSwitchedCTA().find(global_cta_id) == kernel_1.getSwitchedCTA().end()){
 #if 0
       if(m_core[core]->m_thread[preempted_cta_id * padded_cta_size] && m_core[core]->get_hw2global().find(preempted_cta_id) == m_core[core]->get_hw2global().end()){
          global_cta_id = m_core[core]->m_thread[preempted_cta_id * padded_cta_size]->get_block_idx();
@@ -3719,40 +3751,38 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
          global_cta_id = m_core[core]->get_hw2global()[preempted_cta_id];
 #endif
 
-      if(global_cta_id != -1 && kernel_1.getSwitchedCTA().find(global_cta_id) == kernel_1.getSwitchedCTA().end()){
-         switched_out_cta m_switched_out_cta;
+//      if(kernel_1.getSwitchedCTA().find(global_cta_id) == kernel_1.getSwitchedCTA().end()){
+         switched_out_cta tmp_switched_out_cta;
          unsigned num_warps = padded_cta_size / m_config->warp_size;
-         /* Initialize switched-out cta */
-         m_switched_out_cta.id = global_cta_id;
-         m_switched_out_cta.cta_size = padded_cta_size;
-         m_switched_out_cta.num_warps = num_warps;
-         m_switched_out_cta.m_warp = new shd_warp_t[num_warps];	
-         m_switched_out_cta.m_simt_stack = new simt_stack*[num_warps];
-         m_switched_out_cta.m_threadState = new thread_ctx_t[padded_cta_size];
-         m_switched_out_cta.m_thread = new ptx_thread_info*[padded_cta_size];
-         m_switched_out_cta.m_local_memory = new memory_space*[padded_cta_size];
-         m_switched_out_cta.m_regs = new std::set<unsigned>[num_warps];
-         m_switched_out_cta.m_longopregs = new std::set<unsigned>[num_warps];
+         // Initialize switched-out cta //
+         tmp_switched_out_cta.id = global_cta_id;
+         tmp_switched_out_cta.cta_size = padded_cta_size;
+         tmp_switched_out_cta.num_warps = num_warps;
+         tmp_switched_out_cta.m_warp = new shd_warp_t[num_warps];	
+         tmp_switched_out_cta.m_simt_stack = new simt_stack*[num_warps];
+         tmp_switched_out_cta.m_threadState = new thread_ctx_t[padded_cta_size];
+         tmp_switched_out_cta.m_thread = new ptx_thread_info*[padded_cta_size];
+         tmp_switched_out_cta.m_local_memory = new memory_space*[padded_cta_size];
+         tmp_switched_out_cta.m_regs = new std::set<unsigned>[num_warps];
+         tmp_switched_out_cta.m_longopregs = new std::set<unsigned>[num_warps];
          ////////////////////////////////
-         kernel_1.insertSwitchedCTA(global_cta_id, m_switched_out_cta);
-      }
-      switched_out_cta& m_switched_out_cta = kernel_1.getSwitchedCTA().find(global_cta_id)->second;
-      unsigned start_thread = m_core[core]->m_occupied_cta_to_hwtid[preempted_cta_id];
-      unsigned warp_start_id = start_thread/m_config->warp_size;
-      unsigned warp_end_id = warp_start_id + warps_per_cta;
-      /********** Store barrier information **********/	
+         kernel_1.insertSwitchedCTA(global_cta_id, tmp_switched_out_cta);
+//      }
+         switched_out_cta &m_switched_out_cta = kernel_1.getSwitchedCTA()[global_cta_id];
+      //switched_out_cta& m_switched_out_cta = kernel_1.getSwitchedCTA().find(global_cta_id)->second;
+      // Store barrier information //	
       for(unsigned warp_id = warp_start_id; warp_id < warp_end_id; warp_id++){
          for(unsigned bar_id = 0; bar_id < m_core[core]->get_barrier_set().m_max_barriers_per_cta; bar_id++)
             m_switched_out_cta.m_bar_id_to_warps[bar_id][warp_id - warp_start_id] = m_core[core]->get_barrier_set().m_bar_id_to_warps[bar_id][warp_id];
          m_switched_out_cta.m_warp_active[warp_id - warp_start_id] = m_core[core]->get_barrier_set().m_warp_active[warp_id];
          m_switched_out_cta.m_warp_at_barrier[warp_id - warp_start_id] = m_core[core]->get_barrier_set().m_warp_at_barrier[warp_id];
+		 assert(m_core[core]->get_barrier_set().m_cta_to_warps[preempted_cta_id][warp_id]);
          m_switched_out_cta.m_cta_to_warps[warp_id - warp_start_id] = m_core[core]->get_barrier_set().m_cta_to_warps[preempted_cta_id][warp_id];
       }
       /////////////////////////////////////////////////
       for(unsigned warp_id = warp_start_id; warp_id < warp_end_id; warp_id++){
-         unsigned idx;
          for(unsigned tid = warp_id * m_config->warp_size; tid < (warp_id + 1) * m_config->warp_size; tid++){
-            /********** Store thread information **********/	
+            // Store thread information //	
             m_switched_out_cta.m_thread[tid - start_thread] = m_core[core]->m_thread[tid];
             m_switched_out_cta.m_threadState[tid - start_thread] = m_core[core]->m_threadState[tid];
             if(tid - start_thread < tid - start_thread + cta_size){	
@@ -3764,9 +3794,9 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
                local_memory_lookup[core][tid] = local_mem;
             }
             /////////////////////////////////////////////////
-            idx = m_core[core]->m_thread[tid]->get_block_idx();
             if(!m_core[core]->m_warp[warp_id].done_exit()
-              && m_core[core]->m_threadState[tid].m_active == true){
+              && m_core[core]->m_threadState[tid].m_active == true
+              && m_core[core]->m_thread[tid]){
                m_core[core]->register_cta_thread_exit(preempted_cta_id, global_cta_id, &(m_core[core]->m_thread[tid]->get_kernel()), false);
                m_core[core]->m_not_completed -= 1;
                m_core[core]->m_active_threads.reset(tid);
@@ -3775,14 +3805,14 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
             assert( m_core[core]->m_thread[tid]!= NULL );
             m_core[core]->m_thread[tid] = NULL;
          }
-         /********** Store warp information **********/
+         /// Store warp information ///
          m_switched_out_cta.m_warp[warp_id - warp_start_id] = m_core[core]->m_warp[warp_id];
          m_switched_out_cta.m_warp[warp_id - warp_start_id].set_preempted();
-         m_core[core]->m_warp[warp_id].m_inst_at_barrier = NULL;
          m_switched_out_cta.m_simt_stack[warp_id - warp_start_id] = m_core[core]->getSimtStack()[warp_id];
          m_switched_out_cta.m_regs[warp_id - warp_start_id] = m_core[core]->m_scoreboard->getRegTable()[warp_id];
          m_switched_out_cta.m_longopregs[warp_id - warp_start_id] = m_core[core]->m_scoreboard->getLongOpRegs()[warp_id];
          /////////////////////////////////////////////
+         m_core[core]->m_warp[warp_id].m_inst_at_barrier = NULL;
          for (int t=0; t<m_config->warp_size; t++)
             m_core[core]->m_warp[warp_id].set_completed(t);
          assert(m_core[core]->m_warp[warp_id].functional_done());
@@ -3790,7 +3820,6 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
          assert(m_core[core]->m_warp[warp_id].hardware_done());
          m_core[core]->getSimtStack()[warp_id] = NULL;
          m_core[core]->getSimtStack()[warp_id] = new simt_stack(warp_id, m_config->warp_size);
-
 
          if(warp_id == m_core[core]->get_ifetch_buffer().m_warp_id)
             m_core[core]->get_ifetch_buffer().m_valid = false;
@@ -3805,15 +3834,11 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
       assert(!m_core[core]->m_cta_status[preempted_cta_id]);
       assert(preempted_cta_id < MAX_THREAD_PER_SM / 32); //Make sure we are preempting kernel1!
 
-      printf("Completely Preempted from core %d-%d: block %d\n\n", m_cluster_id, core, global_cta_id);
-      printf("barrier info. for core: %d\n", m_config->cid_to_sid(core, m_cluster_id));
-      m_core[core]->get_barrier_set().dump();
-      printf("\n\n");
       kernel_1.block_state[global_cta_id].preempted = 1;
       kernel_1.block_state[global_cta_id].issued = 0;
       kernel_1.block_state[global_cta_id].done = 0;
 
-//      m_core[core]->get_hw2global().erase(preempted_cta_id);
+      m_core[core]->get_hw2global().erase(preempted_cta_id);
       m_switched_out_cta.m_ptx_cta_info = ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid];
       ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid]->deleteCTA(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
       ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = NULL;
@@ -3828,6 +3853,11 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
       shared_memory_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = shared_mem;
       ptx_cta_info *cta_info = new ptx_cta_info(preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid);
       ptx_cta_lookup[preempted_cta_id * m_config->num_shader() + m_core[core]->m_sid] = cta_info;
+
+      printf("Completely Preempted from core %d-%d: block %d\n\n", m_cluster_id, core, global_cta_id);
+      printf("barrier info. for core: %d\n", m_config->cid_to_sid(core, m_cluster_id));
+      m_core[core]->get_barrier_set().dump();
+      printf("\n\n");
    }
 }
 

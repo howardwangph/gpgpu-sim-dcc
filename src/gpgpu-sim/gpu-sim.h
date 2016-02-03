@@ -439,6 +439,7 @@ public:
     }
 
 
+   std::vector<kernel_info_t*> m_running_kernels;
 private:
    // clocks
    void reinit_clock_domains(void);
@@ -460,7 +461,6 @@ private:
    class memory_partition_unit **m_memory_partition_unit;
    class memory_sub_partition **m_memory_sub_partition;
 
-   std::vector<kernel_info_t*> m_running_kernels;
    unsigned m_last_issued_kernel;
 
    std::list<unsigned> m_finished_kernel;

@@ -77,7 +77,7 @@ unsigned ptx_cta_info::num_threads() const
 
 void ptx_cta_info::check_cta_thread_status_and_reset()
 {
-   bool fail = false;
+   /*bool fail = false;
    if ( m_threads_that_have_exited.size() != m_threads_in_cta.size() ) {
       printf("\n\n");
       printf("Execution error: Some threads still running in CTA during CTA reallocation! (1)\n");
@@ -125,7 +125,7 @@ void ptx_cta_info::check_cta_thread_status_and_reset()
    }
    if ( fail2 ) {
       abort();
-   }
+   }*/
    m_threads_in_cta.clear();
    m_threads_that_have_exited.clear();
    m_dangling_pointers.clear();

@@ -1410,6 +1410,7 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 	}
 	assert( free_cta_hw_id!=(unsigned)-1 );
 
+
 	// dekline
 //	get_hw2global()[free_cta_hw_id] = global_cta_id;
 //	get_global2hw()[global_cta_id] = free_cta_hw_id;
@@ -1429,6 +1430,7 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 		padded_cta_size = ((cta_size/m_config->warp_size)+1)*(m_config->warp_size);
 
 	unsigned int start_thread = find_available_hwtid(padded_cta_size, true);
+
 	assert((int)start_thread != -1);
 	unsigned int end_thread = start_thread + cta_size;
 	assert(m_occupied_cta_to_hwtid.find(free_cta_hw_id) == m_occupied_cta_to_hwtid.end());
@@ -1468,7 +1470,8 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 
 		function_info *finfo = m_thread[new_tid]->func_info();
 		symbol_table *st = finfo->get_symtab();
-		delete local_memory_lookup[this->m_sid][new_tid];
+		if(!local_memory_lookup[this->m_sid][new_tid])
+			delete local_memory_lookup[this->m_sid][new_tid];
 		local_memory_lookup[this->m_sid][new_tid] = NULL;
 		local_memory_lookup[this->m_sid][new_tid] = m_switched_out_cta.m_local_memory[new_tid - start_thread];
 		m_thread[new_tid]->m_local_mem = m_switched_out_cta.m_local_memory[new_tid - start_thread];
@@ -1489,7 +1492,8 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 		m_dynamic_warp_id++;
 		m_warp[j].m_dynamic_warp_id = m_dynamic_warp_id;
 		m_warp[j].m_shader = this;
-		delete m_simt_stack[j];
+		if(!m_simt_stack[j])
+			delete m_simt_stack[j];
 		m_simt_stack[j] = NULL;
 		m_simt_stack[j] = m_switched_out_cta.m_simt_stack[j - start_thread / m_config->warp_size];
 		m_simt_stack[j]->m_warp_id = j;
@@ -1500,7 +1504,7 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 		/* rebuild barrier status */
 		for(unsigned bar_id = 0; bar_id < m_barriers.m_max_barriers_per_cta; bar_id++)
 			m_barriers.m_bar_id_to_warps[bar_id][j] = m_switched_out_cta.m_bar_id_to_warps[bar_id][j - start_thread/ m_config->warp_size];
-
+	//	assert(m_switched_out_cta.m_cta_to_warps[j - start_thread/ m_config->warp_size]);
 		m_barriers.m_cta_to_warps[free_cta_hw_id][j] = m_switched_out_cta.m_cta_to_warps[j - start_thread/ m_config->warp_size];
 		m_barriers.m_warp_active[j] = m_switched_out_cta.m_warp_active[j - start_thread/ m_config->warp_size];
 		m_barriers.m_warp_at_barrier[j] = m_switched_out_cta.m_warp_at_barrier[j - start_thread/ m_config->warp_size];
@@ -1508,10 +1512,12 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 	}
 
 	unsigned sm_idx = (free_cta_hw_id)*m_config->num_shader() + this->m_sid;
-	delete ptx_cta_lookup[sm_idx];
+	if(!ptx_cta_lookup[sm_idx])
+		delete ptx_cta_lookup[sm_idx];
 	ptx_cta_lookup[sm_idx] = NULL;
 	ptx_cta_lookup[sm_idx] = m_switched_out_cta.m_ptx_cta_info;
-	delete shared_memory_lookup[sm_idx];
+	if(!shared_memory_lookup[sm_idx])
+		delete shared_memory_lookup[sm_idx];
 	shared_memory_lookup[sm_idx] = NULL;
 	shared_memory_lookup[sm_idx] = m_switched_out_cta.m_shared_memory;
 
@@ -1650,29 +1656,29 @@ void gpgpu_sim::issue_block2core()
 
                  if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
                     kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
-                    fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
+    //                fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
                  }
                  if ( kernel->block_state[b_idx].switched && 
                    !kernel->block_state[b_idx].preempted){ // switching this cta
                     if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-                       fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
-                       m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
+  //                     fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
+                      m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
                     }else{
 //                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
                     }
-                 }
+				}
 
               }
               // end of switching
 
               // issue the switched blocks
-              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-                 if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
-                    fprintf(stdout, "CDP: [%d, %d] -- context-switch back\n", kernel->get_uid(), b_idx);
+/*              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+                 if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
+                       fprintf(stdout, "CDP: [%d, %d] -- context-switch back\n", kernel->get_uid(), b_idx);
                     m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
                     break;
                  }
-              }
+              }*/
            }
         }
         // end of issuing switched blocks
