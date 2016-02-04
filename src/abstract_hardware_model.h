@@ -392,7 +392,7 @@ class kernel_info_t {
 		//Po-Han DCC
 		std::map<unsigned int, class memory_space *> m_param_mem_map;
 		bool is_child;
-		unsigned param_entry_cnt;
+		signed int param_entry_cnt;
 		unsigned **per_SM_block_cnt;
 
 		// dekline

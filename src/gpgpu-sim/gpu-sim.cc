@@ -533,11 +533,13 @@ void gpgpu_sim::launch( kernel_info_t *kinfo )
 	for(n=0; n < m_running_kernels.size(); n++ ) {
 		if( (NULL==m_running_kernels[n]) || m_running_kernels[n]->done() ) {
 			m_running_kernels[n] = kinfo;
+#if 0
 			/* DCC: give child higher priority to reduce the size of parameter buffer*/
 			if(g_dyn_child_thread_consolidation && kinfo->is_child){
 			   fprintf(stdout, "DCC: give child higher priority to reduce the size of param buffer\n");
 			   m_last_issued_kernel = n;
                         }
+#endif
 			break;
 		}
 	}
@@ -581,15 +583,16 @@ bool gpgpu_sim::get_more_cta_left() const
 
 kernel_info_t *gpgpu_sim::select_kernel(){
    if(m_running_kernels[m_last_issued_kernel] && !m_running_kernels[m_last_issued_kernel]->no_more_ctas_to_run()) {
-      unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
-      if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
-         m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
-         m_executed_kernel_uids.push_back(launch_uid); 
-         m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
+      if(!g_dyn_child_thread_consolidation || m_running_kernels[m_last_issued_kernel]->is_child ){
+         unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
+         if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
+            m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+            m_executed_kernel_uids.push_back(launch_uid); 
+            m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
+         }
+         return m_running_kernels[m_last_issued_kernel];
       }
-      return m_running_kernels[m_last_issued_kernel];
    }
-
    for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
       unsigned idx = (n+m_last_issued_kernel+1)%m_config.max_concurrent_kernel;
       if( m_running_kernels[idx] && !m_running_kernels[idx]->no_more_ctas_to_run() ) {

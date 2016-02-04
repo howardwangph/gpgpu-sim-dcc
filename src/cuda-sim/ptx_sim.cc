@@ -216,8 +216,12 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
          extern unsigned g_max_param_buffer_size;
          extern bool param_buffer_full; 
          param_buffer_usage -= kernel_param_usage;
-         if((float)param_buffer_usage < (float)g_max_param_buffer_size * 0.5)
+         fprintf(stdout, "Parameter buffer usage %lld", param_buffer_usage);
+         if((float)param_buffer_usage < (float)g_max_param_buffer_size * 0.5){
             param_buffer_full = false;
+            fprintf(stdout, ", <50\%, turn-off full bit");
+         }
+         fprintf(stdout, "\n");
       }
       if( it == m_kernel.m_param_mem_map.end() )
          it = m_kernel.m_param_mem_map.begin();
