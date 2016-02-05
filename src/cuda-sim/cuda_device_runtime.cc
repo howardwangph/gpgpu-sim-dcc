@@ -1330,7 +1330,8 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
          }
       }
    }else{
-      has_child_kernels = true;
+      if(!thread->get_kernel().block_state[parent_block_idx].thread.all()) //a block has child kernel only if some thread turn-off its bit in block state
+         has_child_kernels = true;
    }
    /* Parent-child dependency */
    if(/*!thread->get_kernel().block_state[parent_block_idx].devsynced &&*/ has_child_kernels){
