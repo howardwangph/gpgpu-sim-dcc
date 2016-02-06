@@ -1448,19 +1448,48 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 	unsigned tid = start_thread;
 	reinit(start_thread, end_thread, false);
 
-	while(kernel.more_threads_in_cta()){
-		dim3 ctaid3d = kernel.get_next_cta_id();
+
+	dim3 next_tid;
+	next_tid.x = 0;
+	next_tid.y = 0;
+	next_tid.z = 0;
+	
+	dim3 blockdim = kernel.get_cta_dim();
+	dim3 gridim = kernel.get_grid_dim(-1);
+
+	while(next_tid.z < blockdim.z && next_tid.y < blockdim.y && next_tid.x < blockdim.x){
+/*		dim3 ctaid3d = kernel.get_next_cta_id();
 		unsigned new_tid = kernel.get_next_thread_id();
 		dim3 tid3d = kernel.get_next_thread_id_3d();
 		kernel.increment_thread_id();
+		new_tid += tid;
+*/
+		dim3 ctaid3d;
+		ctaid3d.x=kernel.block_state[idx].block_id.x;
+		ctaid3d.y=kernel.block_state[idx].block_id.y;
+		ctaid3d.z=kernel.block_state[idx].block_id.z;
+		
+		unsigned new_tid = next_tid.x + blockdim.x*next_tid.y + blockdim.x*blockdim.y*next_tid.z;
+		unsigned local_tid = new_tid;
+
+	    unsigned blockid = ctaid3d.x + gridim.x*ctaid3d.y + gridim.x*gridim.y*ctaid3d.z;
+
+		unsigned global_tid = new_tid + blockid * kernel.threads_per_cta();
+
+		dim3 tid3d=next_tid;
+		increment_x_then_y_then_z(next_tid,blockdim);
 		new_tid += tid;
 
 		if(m_thread[new_tid] != NULL)
 			delete m_thread[new_tid];
 		m_thread[new_tid] = NULL;
 		m_thread[new_tid] = m_switched_out_cta.m_thread[new_tid - start_thread];
+		assert(m_thread[new_tid] != NULL);
 		m_thread[new_tid]->set_block_idx(idx);
+		m_thread[new_tid]->set_thread_idx(local_tid);
 		m_thread[new_tid]->set_nctaid(kernel.get_grid_dim(-1));
+		m_thread[new_tid]->set_agg_group_id(-1);
+		m_thread[new_tid]->set_param_mem(global_tid);
 		m_thread[new_tid]->set_ntid(kernel.get_cta_dim());
 		m_thread[new_tid]->set_ctaid(ctaid3d);
 		m_thread[new_tid]->set_tid(tid3d);
@@ -1516,6 +1545,10 @@ void shader_core_ctx::switching_issue( kernel_info_t &kernel, unsigned global_ct
 		m_barriers.m_warp_active[j] = m_switched_out_cta.m_warp_active[j - start_thread/ m_config->warp_size];
 		m_barriers.m_warp_at_barrier[j] = m_switched_out_cta.m_warp_at_barrier[j - start_thread/ m_config->warp_size];
 		///////////////////////////
+		printf("start thread: %d\n", start_thread );
+		printf("end thread: %d\n", end_thread );
+		assert(m_thread[start_thread] != NULL);
+		assert(m_thread[j*32] != NULL);
 	}
 
 	unsigned sm_idx = (free_cta_hw_id)*m_config->num_shader() + this->m_sid;
