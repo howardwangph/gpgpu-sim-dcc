@@ -385,6 +385,7 @@ class kernel_info_t {
 		CUstream_st * create_stream_cta(int agg_group_id, dim3 ctaid);
 		CUstream_st * get_default_stream_cta(int agg_group_id, dim3 ctaid);
 		bool cta_has_stream(int agg_group_id, dim3 ctaid, CUstream_st* stream);
+		void delete_stream_cta(int agg_group_id, dim3 ctaid, CUstream_st* stream);
 		void print_parent_info();
 		void destroy_cta_streams();
 		kernel_info_t * get_parent() { return m_parent_kernel; }

@@ -66,7 +66,7 @@
 #include "../cuda-sim/ptx_ir.h"
 
 /* DCC restrict concurrent block count for parent kernel */
-static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 2, 3, 0, 0, 0, 0, 0, 0};
+static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 2, 3, 0, 6, 6, 4, 0, 8};
 std::string bfs_parent_k("bfsCdpExpandKernel");
 std::string join_parent_k("joinCdpMainJoinKernel");
 std::string sssp_parent_k("ssspCdpExpandKernel");
@@ -78,6 +78,7 @@ std::string kmeans_parent_k("kmeansPoint");
 std::string bc_parent_k1("bfs_kernel");
 std::string bc_parent_k2("backtrack_kernel");
 unsigned g_max_param_buffer_size;
+unsigned g_param_buffer_thres_high, g_param_buffer_thres_low;
 
 #ifdef GPGPUSIM_POWER_MODEL
 #include "power_interface.h"
@@ -495,6 +496,12 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 
 	option_parser_register(opp, "-max_param_buffer_size", OPT_INT32,
 	                &g_max_param_buffer_size, "On-chip kernel parameter buffer size (byte). Default: 32768", "32768");
+
+	option_parser_register(opp, "-param_buffer_threshold_high", OPT_UINT32,
+	                &g_param_buffer_thres_high, "On-chip parameter buffer thresholdhigh (percent). Default: 60", "60");
+
+        option_parser_register(opp, "-param_buffer_threshold_low", OPT_UINT32,
+	                &g_param_buffer_thres_low, "On-chip parameter buffer threshold low (percent). Default: 30", "30");
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -1306,17 +1313,14 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 	   if(k.name().find(bfs_parent_k) != std::string::npos ||
 	     k.name().find(join_parent_k) != std::string::npos || 
 	     k.name().find(sssp_parent_k) != std::string::npos ||
-	     k.name().find(mis_parent_k1) != std::string::npos ||
 	     k.name().find(pr_parent_k1) != std::string::npos ||
+	     k.name().find(pr_parent_k2) != std::string::npos ||
 	     k.name().find(bc_parent_k1) != std::string::npos ||
-	     k.name().find(kmeans_parent_k) != std::string::npos ){
+	     k.name().find(bc_parent_k2) != std::string::npos ||
+	     k.name().find(kmeans_parent_k) != std::string::npos ||
+             k.name().find(mis_parent_k1) != std::string::npos || 
+             k.name().find(mis_parent_k2) != std::string::npos) {
 	      parent_limit = per_kernel_parent_block_cnt[g_app_name];
-           } else if (k.name().find(mis_parent_k2) != std::string::npos) {
-              parent_limit = per_kernel_parent_block_cnt[g_app_name];
-           } else if (k.name().find(pr_parent_k2) != std::string::npos) {
-              parent_limit = 0;
-           } else if (k.name().find(bc_parent_k2) != std::string::npos) {
-              parent_limit = 0;
            }
            if( parent_limit != 0 && k.per_SM_block_cnt[m_tpc][m_config->sid_to_cid(m_sid)] >= parent_limit ){
               return false;

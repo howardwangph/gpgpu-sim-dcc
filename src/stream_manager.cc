@@ -309,6 +309,7 @@ stream_operation stream_manager::front()
     if(!m_service_stream_zero)
     {
         std::list<struct CUstream_st*>::iterator s;
+//        if(m_streams.size() != 0){
         for( s=m_streams.begin(); s != m_streams.end(); s++) {
             CUstream_st *stream = *s;
             if( !stream->busy() && !stream->empty() ) {
@@ -320,6 +321,7 @@ stream_operation stream_manager::front()
                 break;
             }
         }
+//        }
     }
     return result;
 }
@@ -339,12 +341,14 @@ void stream_manager::destroy_stream( CUstream_st *stream )
     while( !stream->empty() )
         ; 
     std::list<CUstream_st *>::iterator s;
+//        if(m_streams.size() != 0){
     for( s=m_streams.begin(); s != m_streams.end(); s++ ) {
         if( *s == stream ) {
             m_streams.erase(s);
             break;
         }
     }
+//        }
     delete stream; 
     pthread_mutex_unlock(&m_lock);
 }
@@ -354,13 +358,15 @@ bool stream_manager::concurrent_streams_empty()
     bool result = true;
     // called by gpu simulation thread
     std::list<struct CUstream_st *>::iterator s;
+//        if(m_streams.size() != 0){
     for( s=m_streams.begin(); s!=m_streams.end();++s ) {
         struct CUstream_st *stream = *s;
         if( !stream->empty() ) {
-            //stream->print(stdout);
+//            stream->print(stdout);
             result = false;
         }
     }
+//        }
     return result;
 }
 
@@ -403,11 +409,13 @@ void stream_manager::print_impl( FILE *fp)
 {
     fprintf(fp,"GPGPU-Sim API: Stream Manager State\n");
     std::list<struct CUstream_st *>::iterator s;
+//        if(m_streams.size() != 0){
     for( s=m_streams.begin(); s!=m_streams.end();++s ) {
         struct CUstream_st *stream = *s;
         if( !stream->empty() ) 
             stream->print(fp);
     }
+//        }
     if( !m_stream_zero.empty() ) 
         m_stream_zero.print(fp);
 }
@@ -456,11 +464,13 @@ kernel_info_t * stream_manager::find_grid(function_info * entry)
     if(grid != NULL)
         return grid;
 
+//        if(m_streams.size() != 0){
     for(auto s=m_streams.begin(); s!=m_streams.end();++s ) {
         grid = (*s)->find_grid(entry);
         if(grid != NULL)
             return grid;
     }
+//        }
 
     return NULL;
 }

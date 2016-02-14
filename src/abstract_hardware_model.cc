@@ -759,8 +759,8 @@ void kernel_info_t::notify_parent_finished() {
    if(m_parent_kernel) {
       if(g_dyn_child_thread_consolidation){ 
          if(name().find("kmeansPoint_CdpKernel") != std::string::npos ||
-           name().find("spmv_csr_scalar_CdpKernel") != std::string::npos ||
-           name().find("mis1_CdpKernel") != std::string::npos ||
+//           name().find("spmv_csr_scalar_CdpKernel") != std::string::npos ||
+//           name().find("mis1_CdpKernel") != std::string::npos ||
            name().find("bfs_CdpKernel") != std::string::npos ||
            name().find("backtrack_CdpKernel") != std::string::npos ){
             std::list<ptx_thread_info *>::iterator it;
@@ -815,6 +815,17 @@ CUstream_st * kernel_info_t::create_stream_cta(int agg_group_id, dim3 ctaid) {
     m_cta_streams[agg_block_id].push_back(stream);
 
     return stream;
+}
+
+void kernel_info_t::delete_stream_cta(int agg_group_id, dim3 ctaid, CUstream_st* stream) {
+//    assert(get_default_stream_cta(agg_group_id, ctaid));
+//    CUstream_st * stream = new CUstream_st();
+    g_stream_manager->destroy_stream(stream);
+
+    agg_block_id_t agg_block_id(agg_group_id, ctaid);
+//    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
+//    assert(m_cta_streams[agg_block_id].size() >= 1); //must have default stream
+    m_cta_streams[agg_block_id].remove(stream);
 }
 
 CUstream_st * kernel_info_t::get_default_stream_cta(int agg_group_id, dim3 ctaid) {

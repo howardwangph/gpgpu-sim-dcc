@@ -17,7 +17,9 @@ class dcc_kernel_distributor_t {
 		unsigned int _thread_count,
 		unsigned int _optimal_block_size,
 		unsigned int _optimal_kernel_size,
-		void * _parameter_buffer):
+		void * _parameter_buffer,
+		int _agg_group_id,
+		dim3 _ctaid):
 	    valid(false),
 	    candidate(false),
 	    launched(false),
@@ -27,7 +29,9 @@ class dcc_kernel_distributor_t {
 	    optimal_kernel_size(_optimal_kernel_size),
 	    parameter_buffer(_parameter_buffer),
 	    merge_count(1),
-	    stream(NULL) {}
+	    stream(NULL),
+            agg_group_id(_agg_group_id),
+            ctaid(_ctaid){}
 
 	bool valid, candidate, launched;
 	kernel_info_t *kernel_grid;
@@ -37,6 +41,8 @@ class dcc_kernel_distributor_t {
 	void *parameter_buffer;
 	unsigned int merge_count;
 	CUstream_st * stream; 
+	int agg_group_id;
+	dim3 ctaid;
 };
 extern bool g_dyn_child_thread_consolidation;	
 extern unsigned g_dcc_timeout_threshold;

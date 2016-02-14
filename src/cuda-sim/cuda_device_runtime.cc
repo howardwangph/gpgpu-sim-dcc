@@ -130,15 +130,16 @@ bool g_dyn_child_thread_consolidation = false;
 unsigned g_dyn_child_thread_consolidation_version = 0;
 unsigned g_dcc_timeout_threshold = 0;
 unsigned pending_child_threads = 0;
-unsigned long long param_buffer_size = 0, param_buffer_usage = 0;
-unsigned kernel_param_usage = 0;
-static const unsigned per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
-static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 23296, 9984, -1, -1, -1, -1, -1, -1};
+signed long long param_buffer_size = 0, param_buffer_usage = 0;
+signed int kernel_param_usage = 0;
+static const signed per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
+static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 23296, 9984, -1, 16640, 16640, -1, -1, -1};
 //static const unsigned per_kernel_parent_block_cnt[10] = {3, -1, 2, 3, -1, -1, -1, -1, -1, -1};
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
 bool param_buffer_full = false;
 extern unsigned g_max_param_buffer_size;
+extern unsigned g_param_buffer_thres_high;
 std::list<int> target_parent_list;
 #if 0
 std::string bfs_parent_k("bfsCdpExpandKernel");
@@ -299,7 +300,7 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
       }
 #endif
       // initialize the kernel distributor entry
-      dcc_kernel_distributor_t distributor_entry(device_grid, total_thread_count, optimal_threads_per_block, optimal_threads_per_kernel, param_buffer);
+      dcc_kernel_distributor_t distributor_entry(device_grid, total_thread_count, optimal_threads_per_block, optimal_threads_per_kernel, param_buffer, thread->get_agg_group_id(), thread->get_ctaid());
       g_cuda_dcc_kernel_distributor.push_back(distributor_entry);
       DEV_RUNTIME_REPORT("DCC: kernel distributor with size " << g_cuda_dcc_kernel_distributor.size());
    }
@@ -451,11 +452,11 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       assert( kd_entry_1->thread_count == total_thread_1 );
       assert( kd_entry_2->thread_count == total_thread_2 );
 
-      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
+/*      parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
       parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
       if(parent_block_idx_1 != parent_block_idx_2){
          return false;
-      }
+      }*/
       if( offset_a_1 + total_thread_1 == offset_a_2 ){
          if(found1 != std::string::npos){ //kernel mis1
             DEV_RUNTIME_REPORT("DCC: MIS1 continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
@@ -495,9 +496,9 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
          total_thread_offset = 4;
          kernel_param_size = 32;
       }else if(found2 != std::string::npos){ //kernel spmv_csr_scalar
-         if(parent_block_idx_1 != parent_block_idx_2){
+/*         if(parent_block_idx_1 != parent_block_idx_2){
             return false;
-         }
+         }*/
          //[offset (4B), total_thread (4B), var (8B), base_a~c (8Bx3)]
          if( offset_a_1 + total_thread_1 == offset_a_2 ){
             DEV_RUNTIME_REPORT("DCC: PAGERANK-" << pr_k2 << " continous -> child1 (" << offset_a_1 << ", " << total_thread_1 << ") child2 (" << offset_a_2 << ", " << total_thread_2 << ")");
@@ -748,9 +749,9 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case MIS:
-            if(found1 != std::string::npos) assert(!remaining && !split && !boundary);
+//            if(found1 != std::string::npos) assert(!remaining && !split && !boundary);
             it->second->read((size_t) 0, 4, &offset_b_1);
-            if(found2 != std::string::npos){
+//            if(found2 != std::string::npos){
                if(remaining && !split && boundary){
                   new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                   new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
@@ -760,15 +761,15 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
                }else{
                   offset_b_1 += (total_thread_2 - remaining_count);
                }
-            } else {
-               offset_b_1 -= total_thread_1;
-            }
+//            } else {
+//               offset_b_1 -= total_thread_1;
+//            }
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case PAGERANK:
-            if(found2 != std::string::npos) assert(!remaining && !split && !boundary);
+            /*if(found2 != std::string::npos) assert(!remaining && !split && !boundary); */
             it->second->read((size_t) 0, 4, &offset_b_1);
-            if(found1 != std::string::npos){
+//            if(found1 != std::string::npos){
                if(remaining && !split && boundary){
                   new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
                   new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
@@ -778,9 +779,9 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
                }else{
                   offset_b_1 += (total_thread_2 - remaining_count);
                }
-            } else {
-               offset_b_1 -= total_thread_1;
-            }
+//            } else {
+//               offset_b_1 -= total_thread_1;
+//            }
             it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
             break;
          case KMEANS:
@@ -950,9 +951,13 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             if(kd_entry->kernel_grid->name().find(mis_k1) != std::string::npos || (kd_entry->kernel_grid->name().find(pr_k2) != std::string::npos))
                kernel_param_usage += 8;
             param_buffer_usage += kernel_param_usage;
-            if( (float)param_buffer_usage > (float)g_max_param_buffer_size * 0.8){
-               param_buffer_full = true;
-               DEV_RUNTIME_REPORT("DCC: parameter buffer usage " << param_buffer_usage << ", exceeds 80% (size = " << g_max_param_buffer_size << ")");
+            DEV_RUNTIME_REPORT("DCC: current parameter buffer usage = " << param_buffer_usage);
+            if( param_buffer_usage * 100 > g_max_param_buffer_size * g_param_buffer_thres_high){
+               if(g_app_name == BFS || g_app_name == AMR || g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
+                 (g_app_name == MIS /*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
+                  param_buffer_full = true;
+               }
+               DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds " << g_param_buffer_thres_high << "% (size = " << g_max_param_buffer_size << ")");
             }
             if(param_buffer_usage > param_buffer_size){
                param_buffer_size = param_buffer_usage;
@@ -1097,6 +1102,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                if(merged){
                   // invalidate and erase kernel 2
                   kd_entry_2->valid = false;
+                  kd_entry_2->kernel_grid->get_parent()->delete_stream_cta(kd_entry_2->agg_group_id, kd_entry_2->ctaid, kd_entry_2->stream); //destroy useless cuda stream
                   g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
 //                  kd_entry_2 = g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
                   kd_entry_2 = g_cuda_dcc_kernel_distributor.begin();
@@ -1217,9 +1223,8 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
             if(it->valid){ 
                switch(launch_mode){
                case NORMAL:
-                  if(g_app_name == BFS || g_app_name == AMR || g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA ||
-                    (g_app_name == PAGERANK && it->kernel_grid->name().find(pr_k1) != std::string::npos) || 
-                    (g_app_name == MIS && it->kernel_grid->name().find(mis_k2) != std::string::npos) ) {
+                  if(g_app_name == BFS || g_app_name == AMR || g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
+                    (g_app_name == MIS /*&& it->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
                      enough_threads = (g_dyn_child_thread_consolidation_version >= 2) ? (pending_child_threads > it->optimal_kernel_size) : (pending_child_threads > it->optimal_block_size);
                      if(no_more_kernel && enough_threads){
                         found_target_entry = true;
@@ -1236,7 +1241,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                         default:
                            break;
                         }
-                        DEV_RUNTIME_REPORT("DCC: parent kernel running but enough pending child threads => merge for a " << target_merge_size << " threads block.");
+                        DEV_RUNTIME_REPORT("DCC: independent child kernel and enough pending child threads => merge for a " << target_merge_size << " threads block.");
                      }
                   }
                   break;
@@ -1293,6 +1298,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                      if(!remained){
                         // invalidate and erase kernel 2
                         it2->valid = false;
+                        it2->kernel_grid->get_parent()->delete_stream_cta(it2->agg_group_id, it2->ctaid, it2->stream); //destroy useless cuda stream
                         it2 = g_cuda_dcc_kernel_distributor.erase(it2);
                         it2--;
                      }
