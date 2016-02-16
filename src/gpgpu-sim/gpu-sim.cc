@@ -905,6 +905,11 @@ void gpgpu_sim::update_stats() {
 	m_memory_stats->memlatstat_lat_pw();
 	gpu_tot_sim_cycle += gpu_sim_cycle;
 	gpu_tot_sim_insn += gpu_sim_insn;
+	gpu_tot_issued_cta += m_total_cta_launched;
+
+        gpu_sim_cycle = 0;
+        gpu_sim_insn = 0;
+        m_total_cta_launched = 0;
 }
 
 void gpgpu_sim::print_stats()

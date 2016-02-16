@@ -3462,35 +3462,31 @@ unsigned simt_core_cluster::issue_block2core() {
 	
 	  int switch_issued = 0;
 	  for(unsigned n=0; n < m_gpu->m_running_kernels.size(); n++ ) {
-		  kernel_info_t *kernel = m_gpu->m_running_kernels[n];
-		  if(kernel && !g_dyn_child_thread_consolidation){
-			  for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-				  for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-					  if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
-						  if( kernel && m_core[core]->can_issue_1block(*kernel)) {
-							  fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: %d\n", kernel->get_uid(), b_idx, kernel);
-							  m_core[core]->switching_issue(*kernel, b_idx);
-							  num_blocks_issued++;
-							  m_cta_issue_next_core=core; 
-							  switch_issued = 1;
-							  break;
-						  }
-					  }
-				  }
-				  if (switch_issued)
-				  	break;
-			  }
-		  }
-		  if (switch_issued)
-		  	break;
-	  }
+             kernel_info_t *kernel = m_gpu->m_running_kernels[n];
+             if(kernel && !g_dyn_child_thread_consolidation){
+                for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+                   if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
+                      if( kernel && m_core[core]->can_issue_1block(*kernel)) {
+                         fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: %d\n", kernel->get_uid(), b_idx, kernel);
+                         m_core[core]->switching_issue(*kernel, b_idx);
+                         num_blocks_issued++;
+                         m_cta_issue_next_core=core; 
+                         switch_issued = 1;
+                         break;
+                      }
+                   }
+                }
+             }
+             if (switch_issued)
+                break;
+          }
 
-      if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
-         m_core[core]->issue_block2core(*kernel);
-         num_blocks_issued++;
-         m_cta_issue_next_core=core; 
-         break;
-      }
+          if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
+             m_core[core]->issue_block2core(*kernel);
+             num_blocks_issued++;
+             m_cta_issue_next_core=core; 
+             break;
+          }
    }
    return num_blocks_issued;
 }
