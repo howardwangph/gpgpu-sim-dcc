@@ -495,3 +495,7 @@ kernel_info_t * CUstream_st::find_grid(function_info * entry) {
 
     return grid;
 }
+
+unsigned stream_manager::stream_count(){
+   return m_streams.size();
+}

@@ -66,7 +66,7 @@
 #include "../cuda-sim/ptx_ir.h"
 
 /* DCC restrict concurrent block count for parent kernel */
-static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 2, 3, 0, 6, 6, 4, 0, 8};
+static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 3/*2*/, 3, 0, 6, 6, 4, 0, 8};
 std::string bfs_parent_k("bfsCdpExpandKernel");
 std::string join_parent_k("joinCdpMainJoinKernel");
 std::string sssp_parent_k("ssspCdpExpandKernel");

@@ -255,6 +255,7 @@ public:
     bool operation(bool * sim);
     //Jin: support aggregated blocks
     kernel_info_t * find_grid(function_info * entry);
+    unsigned stream_count();
 private:
     void print_impl( FILE *fp);
 

@@ -133,7 +133,7 @@ unsigned pending_child_threads = 0;
 signed long long param_buffer_size = 0, param_buffer_usage = 0;
 signed int kernel_param_usage = 0;
 static const signed per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
-static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 23296, 9984, -1, 16640, 16640, -1, -1, -1};
+static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 16640/*23296*/, 9984, -1, 16640, 16640, -1, -1, -1};
 //static const unsigned per_kernel_parent_block_cnt[10] = {3, -1, 2, 3, -1, -1, -1, -1, -1, -1};
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
@@ -937,6 +937,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                if( kd_entry->parameter_buffer == parameter_buffer ){
                   kd_entry->valid = true;
                   device_grid = kd_entry->kernel_grid; //get kernel descriptor
+                  device_grid->m_launch_latency += 7200; //simulate create stream latency
                   device_kernel_param_mem = kd_entry->kernel_grid->get_param_memory(-1); //get paramenter buffer
                   pending_child_threads += kd_entry->thread_count; //record pending child threads
                   k_dis = &(*kd_entry);
@@ -986,6 +987,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                //create child kernel_info_t and index it with parameter_buffer address
                device_grid = new kernel_info_t(config.grid_dim, config.block_dim, device_kernel_entry);
                device_grid->launch_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+               if(g_agg_blocks_support) device_grid->m_launch_latency += 7200; //simulate stream create latency
                kernel_info_t & parent_grid = thread->get_kernel();
                DEV_RUNTIME_REPORT("child kernel launched by " << parent_grid.name() << ", agg_group_id " <<
                  thread->get_agg_group_id() << ", cta (" <<
@@ -1054,7 +1056,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                  " to stream " << child_stream->get_uid() << ": " << child_stream);
             }
             else {
-               assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream)); 
+//               assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream)); 
                DEV_RUNTIME_REPORT("launching child kernel " << device_grid->get_uid() << 
                  " to stream " << child_stream->get_uid() << ": " << child_stream);
             }
