@@ -809,7 +809,7 @@ CUstream_st * kernel_info_t::create_stream_cta(int agg_group_id, dim3 ctaid) {
     get_default_stream_cta(agg_group_id, ctaid);
     CUstream_st * stream = new CUstream_st();
     g_stream_manager->add_stream(stream);
-    fprintf(stdout, "STREAMMANAGER, add, %0llx, %d\n", stream, g_stream_manager->stream_count()); fflush(stdout);
+    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
 
     agg_block_id_t agg_block_id(agg_group_id, ctaid);
 //    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
@@ -823,7 +823,7 @@ void kernel_info_t::delete_stream_cta(int agg_group_id, dim3 ctaid, CUstream_st*
 //    assert(get_default_stream_cta(agg_group_id, ctaid));
 //    CUstream_st * stream = new CUstream_st();
     g_stream_manager->destroy_stream(stream);
-    fprintf(stdout, "STREAMMANAGER, del, %0llx, %d\n", stream, g_stream_manager->stream_count()); fflush(stdout);
+    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
 
     agg_block_id_t agg_block_id(agg_group_id, ctaid);
 //    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
@@ -847,7 +847,7 @@ CUstream_st * kernel_info_t::get_default_stream_cta(int agg_group_id, dim3 ctaid
 	m_cta_streams[agg_block_id] = std::list<CUstream_st *>();
 	CUstream_st * stream = new CUstream_st();
 	g_stream_manager->add_stream(stream);
-        fprintf(stdout, "STREAMMANAGER, add, %0llx, %d\n", stream, g_stream_manager->stream_count()); fflush(stdout);
+        fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
         m_cta_streams[agg_block_id].push_back(stream);
 	return stream;
     }
@@ -883,7 +883,7 @@ void kernel_info_t::destroy_cta_streams() {
 	stream_size += s->second.size();
 	for(auto ss = s->second.begin(); ss != s->second.end(); ss++){
 	    g_stream_manager->destroy_stream(*ss);
-            fprintf(stdout, "STREAMMANAGER, del, %0llx, %d\n", *ss, g_stream_manager->stream_count()); fflush(stdout);
+            fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", s->first.first, s->first.second.x, s->first.second.y, s->first.second.x, *ss, g_stream_manager->stream_count()); fflush(stdout);
         }
 	s->second.clear();
     }
