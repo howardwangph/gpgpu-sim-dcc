@@ -805,16 +805,26 @@ void kernel_info_t::notify_parent_finished() {
 }
 
 CUstream_st * kernel_info_t::create_stream_cta(int agg_group_id, dim3 ctaid) {
-//    assert(get_default_stream_cta(agg_group_id, ctaid));
-    get_default_stream_cta(agg_group_id, ctaid);
+    assert(get_default_stream_cta(agg_group_id, ctaid));
+//    get_default_stream_cta(agg_group_id, ctaid);
     CUstream_st * stream = new CUstream_st();
     g_stream_manager->add_stream(stream);
-    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
-
     agg_block_id_t agg_block_id(agg_group_id, ctaid);
-//    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
-//    assert(m_cta_streams[agg_block_id].size() >= 1); //must have default stream
+    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
+    assert(m_cta_streams[agg_block_id].size() >= 1); //must have default stream
     m_cta_streams[agg_block_id].push_back(stream);
+//    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
+/*    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\nm_cta_streams:\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); 
+    for(auto s = m_cta_streams.begin(); s != m_cta_streams.end(); s++ ){
+	    fprintf(stdout, "[%d, (%u, %u, %u)] ->", s->first.first, s->first.second.x, s->first.second.y, s->first.second.z);
+	    if(s->second.size() != 0){
+		    for(auto ss = s->second.begin(); ss != s->second.end(); ss++){
+			    fprintf(stdout, " (%d, %llx)", (*ss)->get_uid(), *ss);
+		    }
+	    }
+	    fprintf(stdout, "\n");
+    }
+    fprintf(stdout, "\n");*/
 
     return stream;
 }
@@ -823,7 +833,7 @@ void kernel_info_t::delete_stream_cta(int agg_group_id, dim3 ctaid, CUstream_st*
 //    assert(get_default_stream_cta(agg_group_id, ctaid));
 //    CUstream_st * stream = new CUstream_st();
     g_stream_manager->destroy_stream(stream);
-    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
+//    fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
 
     agg_block_id_t agg_block_id(agg_group_id, ctaid);
 //    assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
@@ -847,8 +857,19 @@ CUstream_st * kernel_info_t::get_default_stream_cta(int agg_group_id, dim3 ctaid
 	m_cta_streams[agg_block_id] = std::list<CUstream_st *>();
 	CUstream_st * stream = new CUstream_st();
 	g_stream_manager->add_stream(stream);
-        fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); fflush(stdout);
         m_cta_streams[agg_block_id].push_back(stream);
+/*        fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, add, %0llx, %d\nm_cta_streams:\n", agg_group_id, ctaid.x, ctaid.y, ctaid.z, stream, g_stream_manager->stream_count()); 
+	for(auto s = m_cta_streams.begin(); s != m_cta_streams.end(); s++ ){
+		fprintf(stdout, "[%d, (%u, %u, %u)] ->", s->first.first, s->first.second.x, s->first.second.y, s->first.second.z);
+		if(s->second.size() != 0){
+			for(auto ss = s->second.begin(); ss != s->second.end(); ss++){
+				fprintf(stdout, " (%d, %llx)", (*ss)->get_uid(), *ss);
+			}
+		}
+		fprintf(stdout, "\n");
+	}
+	fprintf(stdout, "\n");
+	fflush(stdout);*/
 	return stream;
     }
 }
@@ -881,10 +902,12 @@ void kernel_info_t::destroy_cta_streams() {
     size_t stream_size = 0;
     for(auto s = m_cta_streams.begin(); s != m_cta_streams.end(); s++) {
 	stream_size += s->second.size();
+	if(s->second.size() != 0){
 	for(auto ss = s->second.begin(); ss != s->second.end(); ss++){
 	    g_stream_manager->destroy_stream(*ss);
-            fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", s->first.first, s->first.second.x, s->first.second.y, s->first.second.x, *ss, g_stream_manager->stream_count()); fflush(stdout);
+//            fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", s->first.first, s->first.second.x, s->first.second.y, s->first.second.x, *ss, g_stream_manager->stream_count()); fflush(stdout);
         }
+	}
 	s->second.clear();
     }
     printf("size %lu\n", stream_size);

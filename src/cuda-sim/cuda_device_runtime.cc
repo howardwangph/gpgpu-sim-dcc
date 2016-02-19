@@ -133,7 +133,7 @@ unsigned pending_child_threads = 0;
 signed long long param_buffer_size = 0, param_buffer_usage = 0;
 signed int kernel_param_usage = 0;
 static const signed per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
-static const unsigned per_kernel_optimal_child_size[10] = {16640, 9984, 16640/*23296*/, 9984, -1, 16640, 16640, -1, -1, -1};
+static const unsigned per_kernel_optimal_child_size[10] = {16640, 1664/*9984*/, 16640/*23296*/, 9984, -1, 16640, 16640, -1, -1, -1};
 //static const unsigned per_kernel_parent_block_cnt[10] = {3, -1, 2, 3, -1, -1, -1, -1, -1, -1};
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
@@ -937,7 +937,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                if( kd_entry->parameter_buffer == parameter_buffer ){
                   kd_entry->valid = true;
                   device_grid = kd_entry->kernel_grid; //get kernel descriptor
-                  device_grid->m_launch_latency += 7200; //simulate create stream latency
+//                  device_grid->m_launch_latency += 7200; //simulate create stream latency
                   device_kernel_param_mem = kd_entry->kernel_grid->get_param_memory(-1); //get paramenter buffer
                   pending_child_threads += kd_entry->thread_count; //record pending child threads
                   k_dis = &(*kd_entry);
@@ -954,7 +954,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             param_buffer_usage += kernel_param_usage;
             DEV_RUNTIME_REPORT("DCC: current parameter buffer usage = " << param_buffer_usage);
             if( param_buffer_usage * 100 > g_max_param_buffer_size * g_param_buffer_thres_high){
-               if(g_app_name == BFS || g_app_name == AMR || g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
+               if(g_app_name == BFS || /*g_app_name == AMR ||*/ g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
                  (g_app_name == MIS /*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
                   param_buffer_full = true;
                }
@@ -1310,7 +1310,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                }
             }
          }
-         DEV_RUNTIME_REPORT("DCC: launch kernel " << it->kernel_grid->get_uid() << " with " << it->thread_count << " threads, merged from " << it->merge_count << " child kernels, waited "  << gpu_sim_cycle+gpu_tot_sim_cycle - it->kernel_grid->launch_cycle << " cycles, kernel distributor now has " << pending_child_threads << " pending threads.");
+         DEV_RUNTIME_REPORT("DCC: launch kernel " << it->kernel_grid->get_uid() << " with " << it->thread_count << " threads, merged from " << it->merge_count << " child kernels, waited "  << gpu_sim_cycle+gpu_tot_sim_cycle - it->kernel_grid->launch_cycle << " cycles, kernel distributor now has " << pending_child_threads-it->thread_count << " pending threads.");
          fprintf(stderr, "%llu, %u, %d, %d, %d, %d, %d\n", gpu_tot_sim_cycle+gpu_sim_cycle, it->kernel_grid->get_uid(), it->thread_count, it->merge_count, parent_finished, no_more_kernel, enough_threads);
          it->kernel_grid->reset_block_state();
          pending_child_threads -= it->thread_count;

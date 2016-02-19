@@ -427,7 +427,7 @@ class kernel_info_t {
 		struct agg_block_id_comp {
 			bool operator() (const agg_block_id_t & a, const agg_block_id_t & b) const
 			{   
-				if(a.first < b.first)
+				/*if(a.first < b.first)
 					return true;
 				else if(a.second.z < b.second.z)
 					return true;
@@ -436,7 +436,30 @@ class kernel_info_t {
 				else if (a.second.x < b.second.x)
 					return true;
 				else
+					return false;*/
+				if(a.first < b.first){
+					return true;
+				}else if(a.first == b.first){
+					if(a.second.z < b.second.z){
+						return true;
+					}else if(a.second.z == b.second.z){
+						if(a.second.y < b.second.y){
+							return true;
+						}else if(a.second.y == b.second.y){
+							if (a.second.x < b.second.x){
+								return true;
+							}else{
+								return false;
+							}
+						}else{
+							return false;
+						}
+					}else{
+						return false;
+					}
+				}else{
 					return false;
+				}
 			}
 		};
 
