@@ -397,7 +397,7 @@ public:
    unsigned threads_per_core() const;
    unsigned max_cta_per_core() const;
    bool get_more_cta_left() const;
-   kernel_info_t *select_kernel();
+   kernel_info_t *select_kernel(unsigned);
 
    const gpgpu_sim_config &get_config() const { return m_config; }
    void gpu_print_stat(FILE * fout);

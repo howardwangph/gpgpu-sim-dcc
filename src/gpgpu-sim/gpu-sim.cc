@@ -588,8 +588,16 @@ bool gpgpu_sim::get_more_cta_left() const
   return a.thread_count > b.thread_count;
   }*/
 
-kernel_info_t *gpgpu_sim::select_kernel(){
+kernel_info_t *gpgpu_sim::select_kernel(unsigned cluster_id){
    if(m_running_kernels[m_last_issued_kernel] && !m_running_kernels[m_last_issued_kernel]->no_more_ctas_to_run()) {
+      bool cluster_issuable = false;
+      for(unsigned i = 0; i < getShaderCoreConfig()->n_simt_cores_per_cluster; i++ ){
+	 if( m_cluster[cluster_id]->core_can_issue_1block(i, m_running_kernels[m_last_issued_kernel]) ){
+		 cluster_issuable = true;
+		 break;
+	 }
+      }
+      if(cluster_issuable){
       if(!g_dyn_child_thread_consolidation || m_running_kernels[m_last_issued_kernel]->is_child ){
          unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
          if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
@@ -598,6 +606,7 @@ kernel_info_t *gpgpu_sim::select_kernel(){
             m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
          }
          return m_running_kernels[m_last_issued_kernel];
+      }
       }
    }
    for(unsigned n=0; n < m_running_kernels.size(); n++ ) {

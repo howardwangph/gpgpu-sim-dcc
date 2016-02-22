@@ -987,7 +987,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                //create child kernel_info_t and index it with parameter_buffer address
                device_grid = new kernel_info_t(config.grid_dim, config.block_dim, device_kernel_entry);
                device_grid->launch_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
-               if(g_agg_blocks_support) device_grid->m_launch_latency += 7200; //simulate stream create latency
+//               if(g_agg_blocks_support) device_grid->m_launch_latency += 7200; //simulate stream create latency
                kernel_info_t & parent_grid = thread->get_kernel();
                DEV_RUNTIME_REPORT("child kernel launched by " << parent_grid.name() << ", agg_group_id " <<
                  thread->get_agg_group_id() << ", cta (" <<
@@ -1038,7 +1038,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                     " to default stream of the cta " << child_stream->get_uid() << ": " << child_stream);
                }
                else {
-                  assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream)); 
+                  assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream) || g_stream_manager->has_stream(child_stream)); 
                   DEV_RUNTIME_REPORT("launching child kernel " << device_grid->get_uid() << 
                     " to stream " << child_stream->get_uid() << ": " << child_stream);
                }
@@ -1056,6 +1056,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                  " to stream " << child_stream->get_uid() << ": " << child_stream);
             }
             else {
+               assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream) || g_stream_manager->has_stream(child_stream)); 
 //               assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream)); 
                DEV_RUNTIME_REPORT("launching child kernel " << device_grid->get_uid() << 
                  " to stream " << child_stream->get_uid() << ": " << child_stream);

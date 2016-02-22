@@ -221,7 +221,7 @@ void warp_inst_t::generate_mem_accesses()
 	    break;
 	case shared_space: break;
 	case dcc_param_space: 
-			   fprintf(stdout, "leave generate_mem_accesses early\n");
+//			   fprintf(stdout, "leave generate_mem_accesses early\n");
 			   return;
 	default: assert(0); break; 
     }

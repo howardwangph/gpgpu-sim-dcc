@@ -353,6 +353,13 @@ void stream_manager::destroy_stream( CUstream_st *stream )
     pthread_mutex_unlock(&m_lock);
 }
 
+bool stream_manager::has_stream( CUstream_st *stream ){
+	if(std::find(m_streams.begin(), m_streams.end(), stream) != m_streams.end())
+		return true;
+	else
+		return false;
+}
+
 bool stream_manager::concurrent_streams_empty()
 {
     bool result = true;
