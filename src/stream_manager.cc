@@ -255,6 +255,10 @@ bool stream_manager::check_finished_kernel()
     return check;
 }
 
+bool stream_manager::gpu_can_start_kernel(){
+	return m_gpu->can_start_kernel();
+}
+
 bool stream_manager::register_finished_kernel(unsigned grid_uid)
 {
     // called by gpu simulation thread

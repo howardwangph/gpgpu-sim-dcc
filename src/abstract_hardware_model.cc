@@ -672,12 +672,15 @@ void kernel_info_t::reset_block_state()
 // check if all switched out CTA are finished
 bool kernel_info_t::switched_done() const
 {
+	bool done = true;
     for ( unsigned i=0; i<num_blocks()/*(unsigned)m_grid_dim.x * m_grid_dim.y * m_grid_dim.z*/; i++ ) {
-	if (block_state[i].preempted/*switched*/ && !block_state[i].done)	    
-	    return false;
+	if (block_state[i].preempted/*switched*/ && !block_state[i].done){
+	    done =  false;
+	    break;
+	}
     }
 
-    return true;
+    return done;
 }
 
 // dekline
@@ -773,8 +776,10 @@ void kernel_info_t::notify_parent_finished() {
          }
          if(m_parent_kernel->parent_child_dependency) {
             if(m_parent_kernel->block_state[tmp_parent_block_idx].thread.all()){
+		  if(m_parent_kernel->block_state[tmp_parent_block_idx].switched == 1){
                m_parent_kernel->block_state[tmp_parent_block_idx].switched = 0;
                fprintf(stdout, "DCC: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx);
+		  }
             }
          }
       }else if(!g_agg_blocks_support){
@@ -786,8 +791,10 @@ void kernel_info_t::notify_parent_finished() {
                   m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
                   fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block preempteded --> re-issue it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
                }else{ //not yet preempted --> mark-off the switch bit
-                  m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
-                  fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+		  if(m_parent_kernel->block_state[m_parent_block_idx].switched == 1){
+                     m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
+                     fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+		  }
                }
 //               fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
             }
@@ -795,7 +802,7 @@ void kernel_info_t::notify_parent_finished() {
       }
       g_total_param_size -= ((m_kernel_entry->get_args_aligned_size() + 255)/256*256);
       m_parent_kernel->remove_child(this);
-      fprintf(stdout, "DCC: remove child-kernel %d from parent %d, %d now has %d childs.\n", this->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_child_count());
+      fprintf(stdout, "Remove child-kernel %d from parent %d, %d now has %d childs.\n", this->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_child_count());
       g_stream_manager->register_finished_kernel(m_parent_kernel->get_uid());
       /* TODO: Po-Han DCC
        * 1) set the corresponding parent threads as child-finished

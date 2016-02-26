@@ -1506,7 +1506,10 @@ bool ldst_unit::memory_cycle( warp_inst_t &inst, mem_stage_stall_type &stall_rea
 	} else if (inst.space.is_global()) { // global memory access 
 		// skip L1 cache if the option is enabled
 		if (m_core->get_config()->gmem_skip_L1D) 
-			bypassL1D = true; 
+			bypassL1D = true;
+		// Po-Han: global memory write should definitely bypass L1!!!
+	//	if (inst.is_store())
+	//		bypassL1D = true;
 	}
 
 	if( bypassL1D ) {
@@ -2077,7 +2080,7 @@ void shader_core_ctx::register_cta_thread_exit( unsigned cta_num, unsigned idx, 
 				if(m_kernel == kernel){
 					m_kernel = NULL;
                                 }
-				if (real){
+				if (real && kernel->switched_done()){
 				   m_gpu->set_kernel_done( kernel );
                                 }
 			}
@@ -3467,7 +3470,7 @@ unsigned simt_core_cluster::issue_block2core() {
                 for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
                    if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
                       if( kernel && m_core[core]->can_issue_1block(*kernel)) {
-                         fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: %d\n", kernel->get_uid(), b_idx, kernel);
+                         fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: 0x%llx\n", kernel->get_uid(), b_idx, kernel);
                          m_core[core]->switching_issue(*kernel, b_idx);
                          num_blocks_issued++;
                          m_cta_issue_next_core=core; 

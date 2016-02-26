@@ -955,7 +955,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             DEV_RUNTIME_REPORT("DCC: current parameter buffer usage = " << param_buffer_usage);
             if( param_buffer_usage * 100 > g_max_param_buffer_size * g_param_buffer_thres_high){
                if(g_app_name == BFS || /*g_app_name == AMR ||*/ g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
-                 (g_app_name == MIS /*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
+                 (g_app_name == MIS || g_app_name == BC || g_app_name == KMEANS/*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
                   param_buffer_full = true;
                }
                DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds " << g_param_buffer_thres_high << "% (size = " << g_max_param_buffer_size << ")");
@@ -1105,7 +1105,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                if(merged){
                   // invalidate and erase kernel 2
                   kd_entry_2->valid = false;
-                  kd_entry_2->kernel_grid->get_parent()->delete_stream_cta(kd_entry_2->agg_group_id, kd_entry_2->ctaid, kd_entry_2->stream); //destroy useless cuda stream
+//                  kd_entry_2->kernel_grid->get_parent()->delete_stream_cta(kd_entry_2->agg_group_id, kd_entry_2->ctaid, kd_entry_2->stream); //destroy useless cuda stream
                   g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
 //                  kd_entry_2 = g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
                   kd_entry_2 = g_cuda_dcc_kernel_distributor.begin();
@@ -1114,13 +1114,15 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             }
          }
       }
-      if(pending_child_threads > per_kernel_optimal_child_size[g_app_name]){
-         DEV_RUNTIME_REPORT("DCC: enough child threads (" << per_kernel_optimal_child_size[g_app_name] << "), issue child kernels to reduce param buffer size.");
-         launch_one_device_kernel(true, NULL, NULL);
-      }
-      if(param_buffer_full){
-         DEV_RUNTIME_REPORT("DCC: parameter buffer full, issue child kernels to reduce param buffer size.");
-         launch_one_device_kernel(true, NULL, NULL);
+      if(g_stream_manager->gpu_can_start_kernel()){
+	      if(pending_child_threads > per_kernel_optimal_child_size[g_app_name] && per_kernel_optimal_child_size[g_app_name] != -1){
+		      DEV_RUNTIME_REPORT("DCC: enough child threads (" << per_kernel_optimal_child_size[g_app_name] << "), issue child kernels to reduce param buffer size.");
+		      launch_one_device_kernel(true, NULL, NULL);
+	      }
+/*	      if(param_buffer_full){
+		      DEV_RUNTIME_REPORT("DCC: parameter buffer full, issue child kernels to reduce param buffer size.");
+		      launch_one_device_kernel(true, NULL, NULL);
+	      }*/
       }
    }
 }
@@ -1246,7 +1248,11 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                         }
                         DEV_RUNTIME_REPORT("DCC: independent child kernel and enough pending child threads => merge for a " << target_merge_size << " threads block.");
                      }
-                  }
+                  } else if(g_app_name == BC || g_app_name == KMEANS){
+                        found_target_entry = true;
+                        target_merge_size = -1;
+                        DEV_RUNTIME_REPORT("DCC: dependent child kernel but KPB full.");
+		  }
                   break;
                case PARENT_FINISHED:
                   if (it->kernel_grid->get_parent() == fin_parent){ 
@@ -1301,7 +1307,7 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                      if(!remained){
                         // invalidate and erase kernel 2
                         it2->valid = false;
-                        it2->kernel_grid->get_parent()->delete_stream_cta(it2->agg_group_id, it2->ctaid, it2->stream); //destroy useless cuda stream
+//                        it2->kernel_grid->get_parent()->delete_stream_cta(it2->agg_group_id, it2->ctaid, it2->stream); //destroy useless cuda stream
                         it2 = g_cuda_dcc_kernel_distributor.erase(it2);
                         it2--;
                      }
@@ -1331,17 +1337,20 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
    unsigned parent_block_idx = thread->get_block_idx();
    std::list<dcc_kernel_distributor_t>::iterator it;
    bool has_child_kernels = false;
-   if(g_dyn_child_thread_consolidation){
+   if(!thread->get_kernel().block_state[parent_block_idx].thread.all()){ //a block has child kernel only if some thread turn-off its bit in block state
+      has_child_kernels = true;
+   }else if(g_dyn_child_thread_consolidation){
       for(it=g_cuda_dcc_kernel_distributor.begin(); it!=g_cuda_dcc_kernel_distributor.end(); it++){
          if((it->kernel_grid->m_parent_threads.front())->get_block_idx() == parent_block_idx){
             has_child_kernels = true;
             break;
          }
       }
-   }else{
-      if(!thread->get_kernel().block_state[parent_block_idx].thread.all()) //a block has child kernel only if some thread turn-off its bit in block state
-         has_child_kernels = true;
    }
+//   else{
+//      if(!thread->get_kernel().block_state[parent_block_idx].thread.all()) //a block has child kernel only if some thread turn-off its bit in block state
+//         has_child_kernels = true;
+//   }
    /* Parent-child dependency */
    if(/*!thread->get_kernel().block_state[parent_block_idx].devsynced &&*/ has_child_kernels){
       thread->get_kernel().block_state[parent_block_idx].devsynced = true;
@@ -1363,7 +1372,7 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
       }
       thread->get_kernel().parent_child_dependency = true;
    }else{
-      DEV_RUNTIME_REPORT("Useless cudaDeviceSynchronize");
+      DEV_RUNTIME_REPORT("Useless cudaDeviceSynchronize from kernel " << thread->get_kernel().get_uid() << " block " << parent_block_idx);
    }
 
    //copy the buffer address to retval0

@@ -557,7 +557,7 @@ void gpgpu_sim::launch( kernel_info_t *kinfo )
 	      kinfo->per_SM_block_cnt[i][j] = 0;
            }
         }
-	print_running_kernels_stats();
+//	print_running_kernels_stats();
 	assert(n < m_running_kernels.size());
 }
 
@@ -717,7 +717,7 @@ void gpgpu_sim::set_kernel_done( kernel_info_t *kernel )
 			break;
 		}
 	}
-	print_running_kernels_stats();
+//	print_running_kernels_stats();
 	assert( k != m_running_kernels.end() ); 
 }
 
@@ -861,7 +861,7 @@ bool gpgpu_sim::active()
 	if( get_more_cta_left() )
 		return true;
 	for(unsigned i = 0; i < m_running_kernels.size(); i++)
-           if( m_running_kernels[i] ) //m_running_kernels has kernels left --> must be preempted --> still active
+           if( m_running_kernels[i] != NULL && !m_running_kernels[i]->done() ) //m_running_kernels has kernels left --> must be preempted --> still active
               return true;
 	extern std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
 	if( !g_cuda_dcc_kernel_distributor.empty() ){
@@ -1104,6 +1104,8 @@ void gpgpu_sim::gpu_print_stat(FILE * statfout)
 
 	extern unsigned long long g_max_total_param_size;
 	fprintf(statfout, "max_total_param_size = %llu\n", g_max_total_param_size);
+	extern unsigned g_max_param_buffer_size; 
+	fprintf(statfout, "max_KPB_usage = %u\n", g_max_param_buffer_size);
 
 	// performance counter for stalls due to congestion.
 	fprintf(statfout, "gpu_stall_dramfull = %d\n", gpu_stall_dramfull);
@@ -1257,8 +1259,8 @@ void shader_core_ctx::mem_instruction_stats(const warp_inst_t &inst)
 //Jin: concurrent kernels on one SM
 bool shader_core_ctx::can_issue_1block(kernel_info_t & kernel) {
 
-	if(m_config->max_cta(kernel) < 1)
-		return false;
+/*	if(m_config->max_cta(kernel) < 1)
+		return false;*/
 
 	return occupy_shader_resource_1block(kernel, false);
 }
@@ -1937,7 +1939,12 @@ void gpgpu_sim::cycle()
 		if (!g_dyn_child_thread_consolidation){
 			//Jin: for cdp support
 			launch_one_device_kernel(true, NULL, NULL);
-		} else {
+		} 
+		else {
+			extern bool param_buffer_full; 
+			if(param_buffer_full && can_start_kernel())
+				launch_one_device_kernel(true, NULL, NULL);
+/*			
 			unsigned n;
 			bool no_more_kernel = true;
 			for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
@@ -1953,7 +1960,7 @@ void gpgpu_sim::cycle()
 				launch_one_device_kernel(true, NULL, NULL);
 			} else {
 				launch_one_device_kernel(false, NULL, NULL);
-			}
+			}*/
 		}
 	}
 }

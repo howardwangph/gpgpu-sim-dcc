@@ -257,6 +257,7 @@ public:
     kernel_info_t * find_grid(function_info * entry);
     unsigned stream_count();
     bool has_stream( CUstream_st *stream );
+    bool gpu_can_start_kernel();
 private:
     void print_impl( FILE *fp);
 
