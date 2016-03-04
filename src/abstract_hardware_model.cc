@@ -626,6 +626,7 @@ kernel_info_t::kernel_info_t( dim3 gridDim, dim3 blockDim, class function_info *
     m_next_cta.x = 0;
     m_next_cta.y = 0;
     m_next_cta.z = 0;
+    //switched_done = 0;
 }
 
 // bddream DCC
@@ -665,11 +666,13 @@ void kernel_info_t::reset_block_state()
    m_next_cta.y = 0;
    m_next_cta.z = 0;
 
+   //switched_done = 0;
    return;
 }
 
 // dekline
 // check if all switched out CTA are finished
+#if 0
 bool kernel_info_t::switched_done() const
 {
 	bool done = true;
@@ -682,6 +685,7 @@ bool kernel_info_t::switched_done() const
 
     return done;
 }
+#endif
 
 // dekline
 // find global cta idx for the block
@@ -744,7 +748,7 @@ void kernel_info_t::remove_child(kernel_info_t * child) {
 }
 
 bool kernel_info_t::is_finished() {
-    if(done() && children_all_finished() && switched_done() )
+    if(done() && children_all_finished() )
 	return true;
     else
 	return false;
@@ -793,6 +797,8 @@ void kernel_info_t::notify_parent_finished() {
                }else{ //not yet preempted --> mark-off the switch bit
 		  if(m_parent_kernel->block_state[m_parent_block_idx].switched == 1){
                      m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
+		     m_parent_kernel->switching_list.remove(m_parent_block_idx);
+		     m_parent_kernel->preswitch_list.remove(m_parent_block_idx);
                      fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
 		  }
                }

@@ -2012,7 +2012,7 @@ class simt_core_cluster {
 		// dekline
 		shader_core_ctx **m_core;
 		unsigned m_cluster_id;
-		void switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id );
+		bool switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id );
 		bool core_can_issue_1block(unsigned core, kernel_info_t *kernel){return m_core[core]->can_issue_1block(*kernel);}
 
 	private:

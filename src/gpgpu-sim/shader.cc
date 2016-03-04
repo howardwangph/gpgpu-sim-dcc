@@ -2044,8 +2044,9 @@ void shader_core_ctx::register_cta_thread_exit( unsigned cta_num, unsigned idx, 
 		/* Andrew: If one block selected to be preempted, it will be preempted in the near future.
 		   However, it might finish itself  before it is preempted. Thus, we still have to set this kind of blocks as "Preempted". */
 
-		if(kernel->block_state[idx].switched && !kernel->block_state[idx].preempted)
+		if(kernel->block_state[idx].switched && !kernel->block_state[idx].preempted){
 			kernel->block_state[idx].preempted = 1;
+		}
 
 //		get_hw2global().erase(cta_num);
 //		get_global2hw().erase(idx);
@@ -2080,7 +2081,7 @@ void shader_core_ctx::register_cta_thread_exit( unsigned cta_num, unsigned idx, 
 				if(m_kernel == kernel){
 					m_kernel = NULL;
                                 }
-				if (real && kernel->switched_done()){
+				if (real && (kernel->preempted_list.size() == 0)){
 				   m_gpu->set_kernel_done( kernel );
                                 }
 			}
@@ -3409,127 +3410,101 @@ unsigned simt_core_cluster::issue_block2core() {
       unsigned core = (i+m_cta_issue_next_core+1)%m_config->n_simt_cores_per_cluster;
 
       kernel_info_t * kernel;
-      
-/*      // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
-      kernel = m_core[core]->get_kernel();
-      if(kernel && !g_dyn_child_thread_consolidation){
-         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-          
-            if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
-               kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_core[core]->switching_latency( *kernel );
-               fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
-            }
-            if ( kernel->block_state[b_idx].switched && 
-              !kernel->block_state[b_idx].preempted){ // switching this cta
-              if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-               switching_ctas(*kernel, core, b_idx);
-              }else{
-                 fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
-              }
-            }
-
-         }
-            // end of switching
-
-            // issue the switched blocks
-         for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-            if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue ){
-               m_core[core]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
-               break;
-            }
-         }
-      }
-      // end of issueing switched blocks*/
 
       //Jin: fetch kernel according to concurrent kernel setting
       if(m_config->gpgpu_concurrent_kernel_sm) {//concurrent kernel on sm 
-         //always select latest issued kernel
-         kernel_info_t *k = m_gpu->select_kernel(m_cluster_id);
-         kernel = k;
+	 //always select latest issued kernel
+	 kernel_info_t *k = m_gpu->select_kernel(m_cluster_id, core);
+	 kernel = k;
+      } else {
+	 //first select core kernel, if no more cta, get a new kernel
+	 //only when core completes
+	 kernel = m_core[core]->get_kernel();
+	 if( kernel == NULL || kernel->no_more_ctas_to_run()) {
+	    //wait till current kernel finishes
+	    if(m_core[core]->get_not_completed() == 0)
+	    {
+	       kernel_info_t *k = m_gpu->select_kernel(m_cluster_id, core);
+	       if( k ) 
+		  m_core[core]->set_kernel(k);
+	       kernel = k;
+	    }
+	 }
       }
-      else {
-         //first select core kernel, if no more cta, get a new kernel
-         //only when core completes
-         kernel = m_core[core]->get_kernel();
-         if( kernel == NULL || kernel->no_more_ctas_to_run()) {
-            //wait till current kernel finishes
-            if(m_core[core]->get_not_completed() == 0)
-            {
-               kernel_info_t *k = m_gpu->select_kernel(m_cluster_id);
-               if( k ) 
-                  m_core[core]->set_kernel(k);
-               kernel = k;
-            }
-         }
+
+      int switch_issued = 0;
+      for(unsigned n=0; n < m_gpu->m_running_kernels.size(); n++ ) {
+	 kernel_info_t *kernel = m_gpu->m_running_kernels[n];
+	 if(kernel && !g_dyn_child_thread_consolidation){
+	    std::list<unsigned int>::iterator it;
+	    for(it = kernel->preempted_list.begin(); it != kernel->preempted_list.end(); it++){
+	       unsigned b_idx = *it;
+	       //                for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+	       assert(kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted);
+	       if (kernel->block_state[b_idx].reissue){
+		  if(m_core[core]->can_issue_1block(*kernel)) {
+		     m_core[core]->switching_issue(*kernel, b_idx);
+		     kernel->preempted_list.erase(it);
+		     kernel->block_state[b_idx].switched = kernel->block_state[b_idx].preempted = kernel->block_state[b_idx].reissue = false;
+		     fprintf(stdout, "CDP: [%d, %d] -- context-switch back, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
+		     num_blocks_issued++;
+		     m_cta_issue_next_core=core; 
+		     switch_issued = 1;
+		     break;
+		  }
+	       }
+	    }
+	    }
+	    if (switch_issued)
+	       break;
+	 }
+
+	 if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
+	    m_core[core]->issue_block2core(*kernel);
+	    num_blocks_issued++;
+	    m_cta_issue_next_core=core; 
+	    break;
+	 }
       }
-	
-	  int switch_issued = 0;
-	  for(unsigned n=0; n < m_gpu->m_running_kernels.size(); n++ ) {
-             kernel_info_t *kernel = m_gpu->m_running_kernels[n];
-             if(kernel && !g_dyn_child_thread_consolidation){
-                for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-                   if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
-                      if( kernel && m_core[core]->can_issue_1block(*kernel)) {
-                         fprintf(stdout, "CDP: [%d, %d] -- context-switch back, kernel: 0x%llx\n", kernel->get_uid(), b_idx, kernel);
-                         m_core[core]->switching_issue(*kernel, b_idx);
-                         num_blocks_issued++;
-                         m_cta_issue_next_core=core; 
-                         switch_issued = 1;
-                         break;
-                      }
-                   }
-                }
-             }
-             if (switch_issued)
-                break;
-          }
-
-          if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
-             m_core[core]->issue_block2core(*kernel);
-             num_blocks_issued++;
-             m_cta_issue_next_core=core; 
-             break;
-          }
-   }
-   return num_blocks_issued;
-}
-
-void simt_core_cluster::cache_flush(){
-   for( unsigned i=0; i < m_config->n_simt_cores_per_cluster; i++ ) 
-      m_core[i]->cache_flush();
-}
-
-bool simt_core_cluster::icnt_injection_buffer_full(unsigned size, bool write){
-   unsigned request_size = size;
-   if (!write) 
-      request_size = READ_PACKET_SIZE;
-   return ! ::icnt_has_buffer(m_cluster_id, request_size);
-}
-
-void simt_core_cluster::icnt_inject_request_packet(class mem_fetch *mf){
-   // stats
-   if (mf->get_is_write()) m_stats->made_write_mfs++;
-   else m_stats->made_read_mfs++;
-   switch (mf->get_access_type()) {
-   case CONST_ACC_R: m_stats->gpgpu_n_mem_const++; break;
-   case TEXTURE_ACC_R: m_stats->gpgpu_n_mem_texture++; break;
-   case GLOBAL_ACC_R: m_stats->gpgpu_n_mem_read_global++; break;
-   case GLOBAL_ACC_W: m_stats->gpgpu_n_mem_write_global++; break;
-   case LOCAL_ACC_R: m_stats->gpgpu_n_mem_read_local++; break;
-   case LOCAL_ACC_W: m_stats->gpgpu_n_mem_write_local++; break;
-   case INST_ACC_R: m_stats->gpgpu_n_mem_read_inst++; break;
-   case L1_WRBK_ACC: m_stats->gpgpu_n_mem_write_global++; break;
-   case L2_WRBK_ACC: m_stats->gpgpu_n_mem_l2_writeback++; break;
-   case L1_WR_ALLOC_R: m_stats->gpgpu_n_mem_l1_write_allocate++; break;
-   case L2_WR_ALLOC_R: m_stats->gpgpu_n_mem_l2_write_allocate++; break;
-   default: assert(0);
+      return num_blocks_issued;
    }
 
-   // The packet size varies depending on the type of request: 
-   // - For write request and atomic request, the packet contains the data 
-   // - For read request (i.e. not write nor atomic), the packet only has control metadata
-   unsigned int packet_size = mf->size(); 
-   if (!mf->get_is_write() && !mf->isatomic()) {
+   void simt_core_cluster::cache_flush(){
+      for( unsigned i=0; i < m_config->n_simt_cores_per_cluster; i++ ) 
+	 m_core[i]->cache_flush();
+   }
+
+   bool simt_core_cluster::icnt_injection_buffer_full(unsigned size, bool write){
+      unsigned request_size = size;
+      if (!write) 
+	 request_size = READ_PACKET_SIZE;
+      return ! ::icnt_has_buffer(m_cluster_id, request_size);
+   }
+
+   void simt_core_cluster::icnt_inject_request_packet(class mem_fetch *mf){
+      // stats
+      if (mf->get_is_write()) m_stats->made_write_mfs++;
+      else m_stats->made_read_mfs++;
+      switch (mf->get_access_type()) {
+	 case CONST_ACC_R: m_stats->gpgpu_n_mem_const++; break;
+	 case TEXTURE_ACC_R: m_stats->gpgpu_n_mem_texture++; break;
+	 case GLOBAL_ACC_R: m_stats->gpgpu_n_mem_read_global++; break;
+	 case GLOBAL_ACC_W: m_stats->gpgpu_n_mem_write_global++; break;
+	 case LOCAL_ACC_R: m_stats->gpgpu_n_mem_read_local++; break;
+	 case LOCAL_ACC_W: m_stats->gpgpu_n_mem_write_local++; break;
+	 case INST_ACC_R: m_stats->gpgpu_n_mem_read_inst++; break;
+	 case L1_WRBK_ACC: m_stats->gpgpu_n_mem_write_global++; break;
+	 case L2_WRBK_ACC: m_stats->gpgpu_n_mem_l2_writeback++; break;
+	 case L1_WR_ALLOC_R: m_stats->gpgpu_n_mem_l1_write_allocate++; break;
+	 case L2_WR_ALLOC_R: m_stats->gpgpu_n_mem_l2_write_allocate++; break;
+	 default: assert(0);
+      }
+
+      // The packet size varies depending on the type of request: 
+      // - For write request and atomic request, the packet contains the data 
+      // - For read request (i.e. not write nor atomic), the packet only has control metadata
+      unsigned int packet_size = mf->size(); 
+      if (!mf->get_is_write() && !mf->isatomic()) {
       packet_size = mf->get_ctrl_size(); 
    }
    m_stats->m_outgoing_traffic_stats->record_traffic(mf, packet_size); 
@@ -3714,7 +3689,7 @@ unsigned long long shader_core_ctx::switching_latency( kernel_info_t &k )
 }
 
 // Andrew
-void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id )
+bool simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id )
 {
 //   unsigned preempted_cta_id = m_core[core]->get_global2hw()[preempted_global_cta_id];
    unsigned cta_size = kernel_1.threads_per_cta(); 
@@ -3864,5 +3839,7 @@ void simt_core_cluster::switching_ctas( kernel_info_t &kernel_1, unsigned core, 
       m_core[core]->get_barrier_set().dump();
       printf("\n\n");
    }
+
+   return preemption_succeed;
 }
 

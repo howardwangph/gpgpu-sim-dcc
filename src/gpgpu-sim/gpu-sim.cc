@@ -577,7 +577,7 @@ bool gpgpu_sim::get_more_cta_left() const
 			return false;
 	}
 	for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
-		if( m_running_kernels[n] && !m_running_kernels[n]->no_more_ctas_to_run() ) 
+		if( m_running_kernels[n] && (!m_running_kernels[n]->no_more_ctas_to_run() || (m_running_kernels[n]->preempted_list.size() != 0)) ) 
 			return true;
 	}
 	return false;
@@ -588,25 +588,27 @@ bool gpgpu_sim::get_more_cta_left() const
   return a.thread_count > b.thread_count;
   }*/
 
-kernel_info_t *gpgpu_sim::select_kernel(unsigned cluster_id){
+kernel_info_t *gpgpu_sim::select_kernel(unsigned cluster_id, unsigned core_id){
    if(m_running_kernels[m_last_issued_kernel] && !m_running_kernels[m_last_issued_kernel]->no_more_ctas_to_run()) {
-      bool cluster_issuable = false;
-      for(unsigned i = 0; i < getShaderCoreConfig()->n_simt_cores_per_cluster; i++ ){
-	 if( m_cluster[cluster_id]->core_can_issue_1block(i, m_running_kernels[m_last_issued_kernel]) ){
-		 cluster_issuable = true;
-		 break;
+      if(g_dyn_child_thread_consolidation){
+	 bool cluster_issuable = m_cluster[cluster_id]->core_can_issue_1block(core_id, m_running_kernels[m_last_issued_kernel]);
+	 if(cluster_issuable){
+	    unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
+	    if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
+	       m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+	       m_executed_kernel_uids.push_back(launch_uid); 
+	       m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
+	    }
+	    return m_running_kernels[m_last_issued_kernel];
 	 }
-      }
-      if(cluster_issuable){
-      if(!g_dyn_child_thread_consolidation || m_running_kernels[m_last_issued_kernel]->is_child ){
-         unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
-         if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
-            m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
-            m_executed_kernel_uids.push_back(launch_uid); 
-            m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
-         }
-         return m_running_kernels[m_last_issued_kernel];
-      }
+      } else {
+	 unsigned launch_uid = m_running_kernels[m_last_issued_kernel]->get_uid(); 
+	 if(std::find(m_executed_kernel_uids.begin(), m_executed_kernel_uids.end(), launch_uid) == m_executed_kernel_uids.end()) {
+	    m_running_kernels[m_last_issued_kernel]->start_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
+	    m_executed_kernel_uids.push_back(launch_uid); 
+	    m_executed_kernel_names.push_back(m_running_kernels[m_last_issued_kernel]->name()); 
+	 }
+	 return m_running_kernels[m_last_issued_kernel];
       }
    }
    for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
@@ -860,6 +862,7 @@ bool gpgpu_sim::active()
 		return true;
 	if( get_more_cta_left() )
 		return true;
+#if 0
 	for(unsigned i = 0; i < m_running_kernels.size(); i++)
            if( m_running_kernels[i] != NULL && !m_running_kernels[i]->done() ) //m_running_kernels has kernels left --> must be preempted --> still active
               return true;
@@ -869,6 +872,7 @@ bool gpgpu_sim::active()
 		launch_one_device_kernel(true, NULL, NULL);
 		return true;
 	}
+#endif
 	return false;
 }
 
@@ -1104,8 +1108,8 @@ void gpgpu_sim::gpu_print_stat(FILE * statfout)
 
 	extern unsigned long long g_max_total_param_size;
 	fprintf(statfout, "max_total_param_size = %llu\n", g_max_total_param_size);
-	extern unsigned g_max_param_buffer_size; 
-	fprintf(statfout, "max_KPB_usage = %u\n", g_max_param_buffer_size);
+	extern unsigned param_buffer_size; 
+	fprintf(statfout, "max_KPB_usage = %u\n", param_buffer_size);
 
 	// performance counter for stalls due to congestion.
 	fprintf(statfout, "gpu_stall_dramfull = %d\n", gpu_stall_dramfull);
@@ -1712,23 +1716,35 @@ void gpgpu_sim::issue_block2core()
 	for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
 	   kernel_info_t *kernel = m_running_kernels[n];
            if(kernel && !g_dyn_child_thread_consolidation){
-              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+	      std::list<unsigned int>::iterator it;
+	      for( it = kernel->preswitch_list.begin(); it != kernel->preswitch_list.end(); it++ ){
+		 //              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+		 unsigned b_idx = *it;
+		 assert( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ); // setting the context switching delay
+		 kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
+		 kernel->switching_list.push_back(b_idx);
+		 //                fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
+	      }
+	      kernel->preswitch_list.clear();
 
-                 if ( ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ) ){ // setting the context switching delay
-                    kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
-    //                fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
-                 }
-                 if ( kernel->block_state[b_idx].switched && 
-                   !kernel->block_state[b_idx].preempted){ // switching this cta
-                    if(gpu_sim_cycle>=kernel->block_state[b_idx].time_stamp_switching ){
-  //                     fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
-                      m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
-                    }else{
+	      for( it = kernel->switching_list.begin(); it != kernel->switching_list.end();){
+		 unsigned b_idx = *it;
+		 assert(kernel->block_state[b_idx].switched && !kernel->block_state[b_idx].preempted); // switching this cta
+		 bool preemption_succeed = false;
+		 if(gpu_sim_cycle >= kernel->block_state[b_idx].time_stamp_switching ){
+		    //                     fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
+		    preemption_succeed = m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
+		 }
+		 if(preemption_succeed){
+		    kernel->preempted_list.push_back(b_idx);
+		    kernel->switching_list.erase(it);
+                    fprintf(stdout, "CDP: [%d, %d] -- context-switch out, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
+		 } else {
+		    it++;
+		 }
 //                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
-                    }
-				}
-
-              }
+	      }
+     
               // end of switching
 
               // issue the switched blocks

@@ -1361,12 +1361,14 @@ void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info
             thread->get_kernel().block_state[parent_block_idx].time_stamp_switching = 0;
             thread->get_kernel().block_state[parent_block_idx].switched = 1;
             thread->get_kernel().block_state[parent_block_idx].preempted = 0;
+	    thread->get_kernel().preswitch_list.push_back(parent_block_idx);
          }
       } else {
          //DCC: register a barrier (borrow from the data structure of context switch) and blocks the whole CTA
          DEV_RUNTIME_REPORT("DCC: mark parent kernel " << thread->get_kernel().get_uid() << " block " << parent_block_idx << " as stalled.");
          if (!thread->get_kernel().block_state[parent_block_idx].switched) {// if this cta is selected for switching first time, set time stamp
             thread->get_kernel().block_state[parent_block_idx].switched = 1;
+	    thread->get_kernel().preswitch_list.push_back(parent_block_idx);
          }
          launch_one_device_kernel(true, NULL, thread);
       }

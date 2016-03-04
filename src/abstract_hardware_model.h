@@ -266,7 +266,7 @@ class kernel_info_t {
 		bool running() const { return m_num_cores_running>0; }
 		bool done() const 
 		{
-			return no_more_ctas_to_run() && !running() && switched_done();
+			return no_more_ctas_to_run() && !running() && (preempted_list.size() == 0);
 		}
 		class function_info *entry() { return m_kernel_entry; }
 		const class function_info *entry() const { return m_kernel_entry; }
@@ -398,10 +398,12 @@ class kernel_info_t {
 
 		// dekline
 		struct block_info *block_state;
-		bool switched_done() const;
+//		bool switched_done() const;
+//		unsigned switched_done;
 		unsigned find_block_idx( dim3 block_id );
 		void reset_block_state(); //Po-Han DCC
 		bool parent_child_dependency;
+		std::list<unsigned int> preswitch_list, switching_list, preempted_list;
 
 		bool no_more_block_to_run()
 		{
