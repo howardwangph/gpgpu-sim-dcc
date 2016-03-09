@@ -403,7 +403,9 @@ class kernel_info_t {
 		unsigned find_block_idx( dim3 block_id );
 		void reset_block_state(); //Po-Han DCC
 		bool parent_child_dependency;
-		std::list<unsigned int> preswitch_list, switching_list, preempted_list;
+		std::list<unsigned int> preswitch_list;
+		std::list<unsigned int> switching_list;
+		std::list<unsigned int> preempted_list;
 
 		bool no_more_block_to_run()
 		{

@@ -3437,6 +3437,7 @@ unsigned simt_core_cluster::issue_block2core() {
 	 kernel_info_t *kernel = m_gpu->m_running_kernels[n];
 	 if(kernel && !g_dyn_child_thread_consolidation){
 	    std::list<unsigned int>::iterator it;
+	    if( kernel->preempted_list.size() > 0 ){
 	    for(it = kernel->preempted_list.begin(); it != kernel->preempted_list.end(); it++){
 	       unsigned b_idx = *it;
 	       //                for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
@@ -3453,6 +3454,7 @@ unsigned simt_core_cluster::issue_block2core() {
 		     break;
 		  }
 	       }
+	    }
 	    }
 	    }
 	    if (switch_issued)

@@ -1712,105 +1712,107 @@ int gpgpu_sim::next_clock_domain(void)
 
 void gpgpu_sim::issue_block2core()
 {
-      // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
-	for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
-	   kernel_info_t *kernel = m_running_kernels[n];
-           if(kernel && !g_dyn_child_thread_consolidation){
-	      std::list<unsigned int>::iterator it;
-	      for( it = kernel->preswitch_list.begin(); it != kernel->preswitch_list.end(); it++ ){
-		 //              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-		 unsigned b_idx = *it;
-		 assert( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 ); // setting the context switching delay
-		 kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
-		 kernel->switching_list.push_back(b_idx);
-		 //                fprintf(stdout, "CDP: setting context-switch time-stamp of block %d as %lu.\n", b_idx, kernel->block_state[b_idx].time_stamp_switching);
-	      }
-	      kernel->preswitch_list.clear();
+   // this function should be envoke mutiple times until this cta is "preempted" (we probably cannot switch this cta right now)
+   std::list<unsigned int>::iterator it;
+   unsigned b_idx;
+   for(unsigned n=0; n < m_running_kernels.size(); n++ ) {
+      kernel_info_t *kernel = m_running_kernels[n];
+      if(kernel && !g_dyn_child_thread_consolidation){
+	 if( kernel->preswitch_list.size() > 0 ){
+	    for( it = kernel->preswitch_list.begin(); it != kernel->preswitch_list.end(); it++ ){
+	       b_idx = *it;
+	       assert( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].time_stamp_switching == 0 );
+	       kernel->block_state[b_idx].time_stamp_switching = gpu_sim_cycle + m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_latency( *kernel );
+	       kernel->switching_list.push_back(b_idx);
+	    }
+	    kernel->preswitch_list.clear();
+	 }
 
-	      for( it = kernel->switching_list.begin(); it != kernel->switching_list.end();){
-		 unsigned b_idx = *it;
-		 assert(kernel->block_state[b_idx].switched && !kernel->block_state[b_idx].preempted); // switching this cta
-		 bool preemption_succeed = false;
-		 if(gpu_sim_cycle >= kernel->block_state[b_idx].time_stamp_switching ){
-		    //                     fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
-		    preemption_succeed = m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
-		 }
-		 if(preemption_succeed){
-		    kernel->preempted_list.push_back(b_idx);
-		    kernel->switching_list.erase(it);
-                    fprintf(stdout, "CDP: [%d, %d] -- context-switch out, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
-		 } else {
-		    it++;
-		 }
-//                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
-	      }
-     
-              // end of switching
+	 if( kernel->switching_list.size() > 0 ){
+	    for( it = kernel->switching_list.begin(); it != kernel->switching_list.end(); it++){
+	       b_idx = *it;
+	       assert(kernel->block_state[b_idx].switched && !kernel->block_state[b_idx].preempted); // switching this cta
+	       bool preemption_succeed = false;
+	       if(gpu_sim_cycle >= kernel->block_state[b_idx].time_stamp_switching ){
+		  //                     fprintf(stdout, "CDP: switching parent kernel %d block %d from cluster %d core %d\n", kernel->get_uid(), b_idx, kernel->block_state[b_idx].cluster_id, kernel->block_state[b_idx].shader_id);
+		  preemption_succeed = m_cluster[kernel->block_state[b_idx].cluster_id]->switching_ctas(*kernel, kernel->block_state[b_idx].shader_id, kernel->block_state[b_idx].hw_cta_id, b_idx);
+	       }
+	       if(preemption_succeed){
+		  kernel->preempted_list.push_back(b_idx);
+		  kernel->switching_list.erase(it);
+		  fprintf(stdout, "CDP: [%d, %d] -- context-switch out, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
+		  break;
+	       } 
+	       //                       fprintf(stdout, "CDP: block %d, %lu context-switch latency remaining\n", b_idx, kernel->block_state[b_idx].time_stamp_switching-gpu_sim_cycle);
+	    }
+	 }
 
-              // issue the switched blocks
-/*              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-                 if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
-                       fprintf(stdout, "CDP: [%d, %d] -- context-switch back\n", kernel->get_uid(), b_idx);
-                    m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
-                    break;
-                 }
-              }*/
-           }
-        }
-        // end of issuing switched blocks
+	 // end of switching
 
-        unsigned last_issued = m_last_cluster_issue; 
-	for (unsigned i=0;i<m_shader_config->n_simt_clusters;i++) {
-		unsigned idx = (i + last_issued + 1) % m_shader_config->n_simt_clusters;
-		unsigned num = m_cluster[idx]->issue_block2core();
-		if( num ) {
-			m_last_cluster_issue=idx;
-			m_total_cta_launched += num;
-		}
-	}
+	 // issue the switched blocks
+	 /*              for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
+			 if ( kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted && kernel->block_state[b_idx].reissue){
+			 fprintf(stdout, "CDP: [%d, %d] -- context-switch back\n", kernel->get_uid(), b_idx);
+			 m_cluster[kernel->block_state[b_idx].cluster_id]->m_core[kernel->block_state[b_idx].shader_id]->switching_issue(*kernel, b_idx); // input: kernel info and global unsigned cta id
+			 break;
+			 }
+			 }*/
+      }
+   }
+   // end of issuing switched blocks
+
+   unsigned last_issued = m_last_cluster_issue; 
+   for (unsigned i=0;i<m_shader_config->n_simt_clusters;i++) {
+      unsigned idx = (i + last_issued + 1) % m_shader_config->n_simt_clusters;
+      unsigned num = m_cluster[idx]->issue_block2core();
+      if( num ) {
+	 m_last_cluster_issue=idx;
+	 m_total_cta_launched += num;
+      }
+   }
 }
 
 unsigned long long g_single_step=0; // set this in gdb to single step the pipeline
 
 void gpgpu_sim::cycle()
 {
-	int clock_mask = next_clock_domain();
+   int clock_mask = next_clock_domain();
 
-	if (clock_mask & CORE ) {
-		// shader core loading (pop from ICNT into core) follows CORE clock
-		for (unsigned i=0;i<m_shader_config->n_simt_clusters;i++) 
-			m_cluster[i]->icnt_cycle(); 
-	}
-	if (clock_mask & ICNT) {
-		// pop from memory controller to interconnect
-		for (unsigned i=0;i<m_memory_config->m_n_mem_sub_partition;i++) {
-			mem_fetch* mf = m_memory_sub_partition[i]->top();
-			if (mf) {
-				unsigned response_size = mf->get_is_write()?mf->get_ctrl_size():mf->size();
-				if ( ::icnt_has_buffer( m_shader_config->mem2device(i), response_size ) ) {
-					if (!mf->get_is_write()) 
-						mf->set_return_timestamp(gpu_sim_cycle+gpu_tot_sim_cycle);
-					mf->set_status(IN_ICNT_TO_SHADER,gpu_sim_cycle+gpu_tot_sim_cycle);
-					::icnt_push( m_shader_config->mem2device(i), mf->get_tpc(), mf, response_size );
-					m_memory_sub_partition[i]->pop();
-				} else {
-					gpu_stall_icnt2sh++;
-				}
-			} else {
-				m_memory_sub_partition[i]->pop();
-			}
-		}
-	}
+   if (clock_mask & CORE ) {
+      // shader core loading (pop from ICNT into core) follows CORE clock
+      for (unsigned i=0;i<m_shader_config->n_simt_clusters;i++) 
+	 m_cluster[i]->icnt_cycle(); 
+   }
+   if (clock_mask & ICNT) {
+      // pop from memory controller to interconnect
+      for (unsigned i=0;i<m_memory_config->m_n_mem_sub_partition;i++) {
+	 mem_fetch* mf = m_memory_sub_partition[i]->top();
+	 if (mf) {
+	    unsigned response_size = mf->get_is_write()?mf->get_ctrl_size():mf->size();
+	    if ( ::icnt_has_buffer( m_shader_config->mem2device(i), response_size ) ) {
+	       if (!mf->get_is_write()) 
+		  mf->set_return_timestamp(gpu_sim_cycle+gpu_tot_sim_cycle);
+	       mf->set_status(IN_ICNT_TO_SHADER,gpu_sim_cycle+gpu_tot_sim_cycle);
+	       ::icnt_push( m_shader_config->mem2device(i), mf->get_tpc(), mf, response_size );
+	       m_memory_sub_partition[i]->pop();
+	    } else {
+	       gpu_stall_icnt2sh++;
+	    }
+	 } else {
+	    m_memory_sub_partition[i]->pop();
+	 }
+      }
+   }
 
-	if (clock_mask & DRAM) {
-		for (unsigned i=0;i<m_memory_config->m_n_mem;i++){
-			m_memory_partition_unit[i]->dram_cycle(); // Issue the dram command (scheduler + delay model)
-			// Update performance counters for DRAM
-			m_memory_partition_unit[i]->set_dram_power_stats(m_power_stats->pwr_mem_stat->n_cmd[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_activity[CURRENT_STAT_IDX][i],
-					m_power_stats->pwr_mem_stat->n_nop[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_act[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_pre[CURRENT_STAT_IDX][i],
-					m_power_stats->pwr_mem_stat->n_rd[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_wr[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_req[CURRENT_STAT_IDX][i]);
-		}
-	}
+   if (clock_mask & DRAM) {
+      for (unsigned i=0;i<m_memory_config->m_n_mem;i++){
+	 m_memory_partition_unit[i]->dram_cycle(); // Issue the dram command (scheduler + delay model)
+	 // Update performance counters for DRAM
+	 m_memory_partition_unit[i]->set_dram_power_stats(m_power_stats->pwr_mem_stat->n_cmd[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_activity[CURRENT_STAT_IDX][i],
+	       m_power_stats->pwr_mem_stat->n_nop[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_act[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_pre[CURRENT_STAT_IDX][i],
+	       m_power_stats->pwr_mem_stat->n_rd[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_wr[CURRENT_STAT_IDX][i], m_power_stats->pwr_mem_stat->n_req[CURRENT_STAT_IDX][i]);
+      }
+   }
 
 	// L2 operations follow L2 clock domain
 	if (clock_mask & L2) {
