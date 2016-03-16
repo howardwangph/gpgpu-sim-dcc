@@ -1453,6 +1453,9 @@ mem_stage_stall_type ldst_unit::process_memory_access_queue( cache_t *cache, war
 	mem_fetch *mf = m_mf_allocator->alloc(inst,inst.accessq_back());
 	std::list<cache_event> events;
 	enum cache_request_status status = cache->access(mf->get_addr(),mf,gpu_sim_cycle+gpu_tot_sim_cycle,events);
+/*	if(m_sid == 3 && cache == m_L1C){
+	   fprintf(stdout, "%llu: constant cache access at address 0x%llx, result %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, mf->get_addr(), status);
+	}*/
 	return process_cache_access( cache, mf->get_addr(), inst, events, mf, status );
 }
 
@@ -1978,6 +1981,10 @@ void ldst_unit::cycle()
 	done &= texture_cycle(pipe_reg, rc_fail, type);
 	done &= memory_cycle(pipe_reg, rc_fail, type);
 	m_mem_rc = rc_fail;
+
+/*	if( m_sid == 3 ){
+	   print(stdout);
+	}*/
 
 	if (!done) { // log stall types and return
 		assert(rc_fail != NO_RC_FAIL);
@@ -3438,73 +3445,72 @@ unsigned simt_core_cluster::issue_block2core() {
 	 if(kernel && !g_dyn_child_thread_consolidation){
 	    std::list<unsigned int>::iterator it;
 	    if( kernel->preempted_list.size() > 0 ){
-	    for(it = kernel->preempted_list.begin(); it != kernel->preempted_list.end(); it++){
-	       unsigned b_idx = *it;
-	       //                for(unsigned b_idx = 0; b_idx < kernel->num_blocks(); b_idx++){
-	       assert(kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted);
-	       if (kernel->block_state[b_idx].reissue){
-		  if(m_core[core]->can_issue_1block(*kernel)) {
-		     m_core[core]->switching_issue(*kernel, b_idx);
-		     kernel->preempted_list.erase(it);
-		     kernel->block_state[b_idx].switched = kernel->block_state[b_idx].preempted = kernel->block_state[b_idx].reissue = false;
-		     fprintf(stdout, "CDP: [%d, %d] -- context-switch back, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
-		     num_blocks_issued++;
-		     m_cta_issue_next_core=core; 
-		     switch_issued = 1;
-		     break;
+	       for(it = kernel->preempted_list.begin(); it != kernel->preempted_list.end(); it++){
+		  unsigned b_idx = *it;
+		  assert(kernel->block_state[b_idx].switched && kernel->block_state[b_idx].preempted);
+		  if (kernel->block_state[b_idx].reissue){
+		     if(m_core[core]->can_issue_1block(*kernel)) {
+			m_core[core]->switching_issue(*kernel, b_idx);
+			kernel->preempted_list.erase(it);
+			kernel->block_state[b_idx].switched = kernel->block_state[b_idx].preempted = kernel->block_state[b_idx].reissue = false;
+			fprintf(stdout, "CDP: [%d, %d] -- context-switch back, %u blocks preempted.\n", kernel->get_uid(), b_idx, kernel->preempted_list.size());
+			num_blocks_issued++;
+			m_cta_issue_next_core=core; 
+			switch_issued = 1;
+			break;
+		     }
 		  }
 	       }
 	    }
-	    }
-	    }
-	    if (switch_issued)
-	       break;
 	 }
-
-	 if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
-	    m_core[core]->issue_block2core(*kernel);
-	    num_blocks_issued++;
-	    m_cta_issue_next_core=core; 
+	 if (switch_issued)
 	    break;
-	 }
       }
-      return num_blocks_issued;
-   }
 
-   void simt_core_cluster::cache_flush(){
+      if( !switch_issued && kernel && !kernel->no_more_ctas_to_run() && m_core[core]->can_issue_1block(*kernel)) {
+	 m_core[core]->issue_block2core(*kernel);
+	 num_blocks_issued++;
+	 m_cta_issue_next_core=core; 
+	 break;
+      }
+   }
+   return num_blocks_issued;
+}
+
+void simt_core_cluster::cache_flush(){
       for( unsigned i=0; i < m_config->n_simt_cores_per_cluster; i++ ) 
 	 m_core[i]->cache_flush();
+}
+
+bool simt_core_cluster::icnt_injection_buffer_full(unsigned size, bool write){
+   unsigned request_size = size;
+   if (!write) 
+      request_size = READ_PACKET_SIZE;
+   return ! ::icnt_has_buffer(m_cluster_id, request_size);
+}
+
+void simt_core_cluster::icnt_inject_request_packet(class mem_fetch *mf){
+   // stats
+   if (mf->get_is_write()) m_stats->made_write_mfs++;
+   else m_stats->made_read_mfs++;
+   switch (mf->get_access_type()) {
+      case CONST_ACC_R: m_stats->gpgpu_n_mem_const++; break;
+      case TEXTURE_ACC_R: m_stats->gpgpu_n_mem_texture++; break;
+      case GLOBAL_ACC_R: m_stats->gpgpu_n_mem_read_global++; break;
+      case GLOBAL_ACC_W: m_stats->gpgpu_n_mem_write_global++; break;
+      case LOCAL_ACC_R: m_stats->gpgpu_n_mem_read_local++; break;
+      case LOCAL_ACC_W: m_stats->gpgpu_n_mem_write_local++; break;
+      case INST_ACC_R: m_stats->gpgpu_n_mem_read_inst++; break;
+      case L1_WRBK_ACC: m_stats->gpgpu_n_mem_write_global++; break;
+      case L2_WRBK_ACC: m_stats->gpgpu_n_mem_l2_writeback++; break;
+      case L1_WR_ALLOC_R: m_stats->gpgpu_n_mem_l1_write_allocate++; break;
+      case L2_WR_ALLOC_R: m_stats->gpgpu_n_mem_l2_write_allocate++; break;
+      default: assert(0);
    }
 
-   bool simt_core_cluster::icnt_injection_buffer_full(unsigned size, bool write){
-      unsigned request_size = size;
-      if (!write) 
-	 request_size = READ_PACKET_SIZE;
-      return ! ::icnt_has_buffer(m_cluster_id, request_size);
-   }
-
-   void simt_core_cluster::icnt_inject_request_packet(class mem_fetch *mf){
-      // stats
-      if (mf->get_is_write()) m_stats->made_write_mfs++;
-      else m_stats->made_read_mfs++;
-      switch (mf->get_access_type()) {
-	 case CONST_ACC_R: m_stats->gpgpu_n_mem_const++; break;
-	 case TEXTURE_ACC_R: m_stats->gpgpu_n_mem_texture++; break;
-	 case GLOBAL_ACC_R: m_stats->gpgpu_n_mem_read_global++; break;
-	 case GLOBAL_ACC_W: m_stats->gpgpu_n_mem_write_global++; break;
-	 case LOCAL_ACC_R: m_stats->gpgpu_n_mem_read_local++; break;
-	 case LOCAL_ACC_W: m_stats->gpgpu_n_mem_write_local++; break;
-	 case INST_ACC_R: m_stats->gpgpu_n_mem_read_inst++; break;
-	 case L1_WRBK_ACC: m_stats->gpgpu_n_mem_write_global++; break;
-	 case L2_WRBK_ACC: m_stats->gpgpu_n_mem_l2_writeback++; break;
-	 case L1_WR_ALLOC_R: m_stats->gpgpu_n_mem_l1_write_allocate++; break;
-	 case L2_WR_ALLOC_R: m_stats->gpgpu_n_mem_l2_write_allocate++; break;
-	 default: assert(0);
-      }
-
-      // The packet size varies depending on the type of request: 
-      // - For write request and atomic request, the packet contains the data 
-      // - For read request (i.e. not write nor atomic), the packet only has control metadata
+   // The packet size varies depending on the type of request: 
+   // - For write request and atomic request, the packet contains the data 
+   // - For read request (i.e. not write nor atomic), the packet only has control metadata
       unsigned int packet_size = mf->size(); 
       if (!mf->get_is_write() && !mf->isatomic()) {
       packet_size = mf->get_ctrl_size(); 

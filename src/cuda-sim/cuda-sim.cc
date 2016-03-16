@@ -1370,6 +1370,10 @@ void ptx_thread_info::ptx_exec_inst( warp_inst_t &inst, unsigned lane_id)
 			//fprintf(stdout, "after datasize\n");
 			insn_memory_op = pI->has_memory_read() ? memory_load : memory_store;
 			//fprintf(stdout, "after memoryop\n");
+
+			if(insn_space.get_type() == param_space_kernel){
+				insn_memaddr += m_param_memory_base;
+			}
 		}
 
 		if ( pI->get_opcode() == BAR_OP && pI->barrier_op() == RED_OPTION) {

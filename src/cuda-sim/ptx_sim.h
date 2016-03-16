@@ -440,6 +440,7 @@ class ptx_thread_info {
 
 		// Po-Han DCC
 		void set_param_mem(unsigned global_tid);
+		addr_t m_param_memory_base;
 		//Jin: get corresponding kernel grid for CDP purpose
 		kernel_info_t & get_kernel() { return m_kernel; }
 

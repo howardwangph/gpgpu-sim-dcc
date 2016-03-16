@@ -475,6 +475,10 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 	option_parser_register(opp, "-dyn_child_thread_consolidation", OPT_BOOL,
 			&g_dyn_child_thread_consolidation, "Turn on dynamic child-thread consolidation support, Default: false",
 			"0");
+	
+	extern bool g_dcc_kernel_param_onchip;
+	option_parser_register(opp, "-dcc_param_onchip", OPT_BOOL,
+	      		&g_dcc_kernel_param_onchip, "Store child kernel parameters in on-chip SRAM buffer, Default: true", "1");
 
 	option_parser_register(opp, "-restrict_parent_block_count", OPT_BOOL,
 	                &g_restrict_parent_block_count, "Restrict number of parent block to reserve resources for child kernels, Default: false",

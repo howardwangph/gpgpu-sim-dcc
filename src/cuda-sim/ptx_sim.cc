@@ -198,6 +198,7 @@ ptx_thread_info::ptx_thread_info( kernel_info_t &kernel )
 void ptx_thread_info::set_param_mem( unsigned global_tid )
 {
    extern bool g_dyn_child_thread_consolidation;
+   extern bool g_dcc_kernel_param_onchip;
    if(g_dyn_child_thread_consolidation && m_kernel.is_child){
       std::map<unsigned int, class memory_space *>::iterator it;
       signed int cnt;
@@ -205,32 +206,44 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
          if (global_tid < it->first )
 	    break;
       }
-      if(m_kernel.param_entry_cnt < (signed int)m_kernel.m_param_mem_map.size() - 1 && cnt > m_kernel.param_entry_cnt){
-         /* change param entry 
-          * --> old param entry is freed
-          * --> reclaim param buffer usage and turn-off full bit if occupance < 50% 
-          **/
-         m_kernel.param_entry_cnt = cnt;
-         extern signed kernel_param_usage;
-         extern signed long long param_buffer_usage;
-         extern unsigned g_max_param_buffer_size;
-         extern unsigned g_param_buffer_thres_low;
-         extern bool param_buffer_full; 
-         param_buffer_usage -= kernel_param_usage;
-         if(param_buffer_usage < 0) param_buffer_usage = 0;
-         fprintf(stdout, "Clear an entry, param_buffer usage %lld", param_buffer_usage);
-         if(param_buffer_usage * 100 < g_max_param_buffer_size * g_param_buffer_thres_low){
-            param_buffer_full = false;
-            fprintf(stdout, ", <%u\%, turn-off full bit", g_param_buffer_thres_low);
-         }
-         fprintf(stdout, "\n");
+      if(g_dcc_kernel_param_onchip){
+	 if(m_kernel.param_entry_cnt < (signed int)m_kernel.m_param_mem_map.size() - 1 && cnt > m_kernel.param_entry_cnt){
+	    /* change param entry 
+	     * --> old param entry is freed
+	     * --> reclaim param buffer usage and turn-off full bit if occupance < 50% 
+	     **/
+	    m_kernel.param_entry_cnt = cnt;
+	    extern signed kernel_param_usage;
+	    extern signed long long param_buffer_usage;
+	    extern unsigned g_max_param_buffer_size;
+	    extern unsigned g_param_buffer_thres_low;
+	    extern bool param_buffer_full; 
+	    param_buffer_usage -= kernel_param_usage;
+	    if(param_buffer_usage < 0) param_buffer_usage = 0;
+	    fprintf(stdout, "Clear an entry, param_buffer usage %lld", param_buffer_usage);
+	    if(param_buffer_usage * 100 < g_max_param_buffer_size * g_param_buffer_thres_low){
+	       param_buffer_full = false;
+	       fprintf(stdout, ", <%u\%, turn-off full bit", g_param_buffer_thres_low);
+	    }
+	    fprintf(stdout, "\n");
+	 }
       }
       if( it == m_kernel.m_param_mem_map.end() )
          it = m_kernel.m_param_mem_map.begin();
-
       m_param_mem = it->second;
+
+      // correct timing simulation on kernel parameters
+      std::map<unsigned int, addr_t>::iterator it2;
+      for( it2 = m_kernel.m_param_mem_base_map.begin(); it2 != m_kernel.m_param_mem_base_map.end(); it2++){
+	 if (global_tid < it->first) break;
+      }
+      if( it2 == m_kernel.m_param_mem_base_map.end() )
+	 it2--;
+      m_param_memory_base = it2->second;
    } else {
       m_param_mem = m_kernel.get_param_memory(m_agg_group_id); 
+      // correct timing simulation on kernel parameters
+      m_param_memory_base = m_kernel.get_param_memory_base(m_agg_group_id);
    }
 }
 

@@ -346,6 +346,9 @@ void warp_inst_t::generate_mem_accesses()
 	    if( !active(thread) ) 
 		continue;
 	    new_addr_type addr = m_per_scalar_thread[thread].memreqaddr[0];
+	    if(0/*space.get_type() == param_space_kernel*/){
+		    printf("Kernel parameter access at address 0x%llx\n", addr);
+	    }
 	    unsigned block_address = line_size_based_tag_func(addr,cache_block_size);
 	    accesses[block_address].set(thread);
 	    unsigned idx = addr-block_address; 
@@ -596,6 +599,7 @@ kernel_info_t::kernel_info_t( dim3 gridDim, dim3 blockDim, class function_info *
     param_entry_cnt = -1;
     parent_child_dependency = false;
     end_cycle = 0;
+    m_param_mem_base = 0;
     // dekline
     // For kernel block metadata
     block_state = new block_info[m_grid_dim.x * m_grid_dim.y * m_grid_dim.z];
@@ -984,6 +988,11 @@ class memory_space * kernel_info_t::get_agg_param_mem(int agg_group_id) {
     return m_agg_block_groups.find(agg_group_id)->second->get_param_memory();
 }
 
+addr_t kernel_info_t::get_agg_param_mem_base(int agg_group_id) {
+    assert(m_agg_block_groups.find(agg_group_id) !=
+	    m_agg_block_groups.end());
+    return m_agg_block_groups.find(agg_group_id)->second->get_param_memory_base();
+}
 
 simt_stack::simt_stack( unsigned wid, unsigned warpSize)
 {

@@ -340,11 +340,21 @@ class kernel_info_t {
 				return get_agg_param_mem(agg_group_id);
 			}
 		}
+		addr_t get_param_memory_base(int agg_group_id) {
+			if(agg_group_id == -1)
+				return m_param_mem_base;
+			else {
+				return get_agg_param_mem_base(agg_group_id);
+			}
+		}
 
 		unsigned get_child_count() const { return m_child_kernels.size(); }
 		void set_param_mem(class memory_space *p_mem) 
 		{ 
 		   m_param_mem = p_mem; 
+		}
+		void set_param_mem_base(addr_t p_mem_base){
+			m_param_mem_base = p_mem_base;
 		}
 
 		//Andrew
@@ -369,6 +379,8 @@ class kernel_info_t {
 
 		std::list<class ptx_thread_info *> m_active_threads;
 		class memory_space *m_param_mem;
+		// simulation kernel parameter read latency
+		addr_t m_param_mem_base;
 
 		//Andrew
 		std::map<unsigned, switched_out_cta> m_switched_out_cta; //use global block ID to index switched out blocks
@@ -392,6 +404,7 @@ class kernel_info_t {
 		std::list<ptx_thread_info *> m_parent_threads; //Po-Han: parent threads
 		//Po-Han DCC
 		std::map<unsigned int, class memory_space *> m_param_mem_map;
+		std::map<unsigned int, addr_t> m_param_mem_base_map;
 		bool is_child;
 		signed int param_entry_cnt;
 		unsigned **per_SM_block_cnt;
@@ -474,6 +487,7 @@ class kernel_info_t {
 		void destroy_agg_block_groups();
 		dim3 get_agg_dim(int agg_group_id) const;
 		class memory_space * get_agg_param_mem(int agg_group_id);
+		addr_t get_agg_param_mem_base(int agg_group_id);
 		int get_next_agg_group_id() { return m_next_agg_group_id; }
 	private:
 		int m_next_agg_group_id;

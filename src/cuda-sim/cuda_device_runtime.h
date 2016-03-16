@@ -31,7 +31,8 @@ class dcc_kernel_distributor_t {
 	    merge_count(1),
 	    stream(NULL),
             agg_group_id(_agg_group_id),
-            ctaid(_ctaid){}
+            ctaid(_ctaid),
+   	    expected_launch_time(0){}
 
 	bool valid, candidate, launched;
 	kernel_info_t *kernel_grid;
@@ -43,6 +44,7 @@ class dcc_kernel_distributor_t {
 	CUstream_st * stream; 
 	int agg_group_id;
 	dim3 ctaid;
+	unsigned long long expected_launch_time;
 };
 extern bool g_dyn_child_thread_consolidation;	
 extern unsigned g_dcc_timeout_threshold;

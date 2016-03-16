@@ -125,8 +125,10 @@ bool g_agg_blocks_support = false;
 unsigned long long g_total_param_size = 0;
 unsigned long long g_max_total_param_size = 0;
 /*Po-Han: dynamic child-thread consolidation support*/
+#define AVG_L2_ACC_TIME 60
 std::list<dcc_kernel_distributor_t> g_cuda_dcc_kernel_distributor;
 bool g_dyn_child_thread_consolidation = false;
+bool g_dcc_kernel_param_onchip = true;
 unsigned g_dyn_child_thread_consolidation_version = 0;
 unsigned g_dcc_timeout_threshold = 0;
 unsigned pending_child_threads = 0;
@@ -220,7 +222,7 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
    //get total child kernel argument size and malloc buffer in global memory
    unsigned child_kernel_arg_size = child_kernel_entry->get_args_aligned_size();
    void *param_buffer;
-   if( g_dyn_child_thread_consolidation ){
+   if( g_dyn_child_thread_consolidation && g_dcc_kernel_param_onchip ){
       // Po-Han: DCC implementation, allocate child kernel parameters in another memory space
       param_buffer = thread->get_gpu()->dcc_param_malloc(child_kernel_arg_size);
       DEV_RUNTIME_REPORT("DCC: child kernel arg pre-allocation: size " << child_kernel_arg_size << ", parameter buffer allocated at " << param_buffer);
@@ -275,10 +277,13 @@ void gpgpusim_cuda_getParameterBufferV2(const ptx_instruction * pI, ptx_thread_i
       DEV_RUNTIME_REPORT("DCC: child kernel properties -- #thread " << total_thread_count << ", reg/thread " << reg_usage << ", max_thread/SM " << max_threads_per_SM << ", optimal_block_size " << optimal_threads_per_block << ", optimal_kernel_size " << optimal_threads_per_kernel);
 
       // pre-allocate child kernel entry and link it with parent kernel
-      kernel_info_t * device_grid = new kernel_info_t(grid_dim, block_dim, child_kernel_entry);
+      kernel_info_t * device_grid = new kernel_info_t(grid_dim, block_dim, child_kernel_entry); 
+      uintptr_t tmp = (uintptr_t) param_buffer;
+      device_grid->set_param_mem_base((addr_t)tmp);
       device_grid->launch_cycle = gpu_sim_cycle + gpu_tot_sim_cycle;
       device_grid->is_child = true;
       device_grid->m_param_mem_map[total_thread_count] = device_grid->get_param_memory(-1); //Po-Han DCC: setting to the kernel paramenter map
+      device_grid->m_param_mem_base_map[total_thread_count] = device_grid->get_param_memory_base(-1);
       kernel_info_t & parent_grid = thread->get_kernel();
       device_grid->add_parent(&parent_grid, thread);  
       DEV_RUNTIME_REPORT("DCC: preallocate child kernel at kernel distributor by " << parent_grid.name() << ", cta (" <<
@@ -333,6 +338,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
    mspace1 = it->second;
    it = kd_entry_2->kernel_grid->m_param_mem_map.begin();
    mspace2 = it->second;
+   std::map<unsigned int, addr_t>::iterator it_base;
    unsigned int total_thread_1, total_thread_2;
    int offset_a_1, offset_a_2, offset_b_1, offset_b_2;
    unsigned int total_thread_sum, total_thread_offset;
@@ -647,7 +653,9 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       unsigned offset;
       unsigned split_size = 0;
       std::map<unsigned int, memory_space *> new_map;
-      for( it = kd_entry_2->kernel_grid->m_param_mem_map.begin(); it != kd_entry_2->kernel_grid->m_param_mem_map.end(); it++ ){
+      std::map<unsigned int, addr_t> new_map_base;
+      for( it = kd_entry_2->kernel_grid->m_param_mem_map.begin(), it_base = kd_entry_2->kernel_grid->m_param_mem_base_map.begin(); 
+		      it != kd_entry_2->kernel_grid->m_param_mem_map.end(); it++, it_base++ ){
          if (!split){
             offset = it->first + total_thread_1;
             DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
@@ -663,6 +671,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
                   DEV_RUNTIME_REPORT("DCC pre-split: found boundary, set new param mem offset at " << split_size);
                   new_mspace->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
                   new_map[split_size] = new_mspace;
+		  new_map_base[split_size] = it_base->second;
                }else if(offset == target_size){ //exact boundary
                   DEV_RUNTIME_REPORT("DCC pre-split: found exact boundary");
                   split = true;
@@ -671,10 +680,12 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
 //            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
             it->second->write((size_t)total_thread_offset, 4, &total_thread_sum, NULL, NULL);
             kd_entry_1->kernel_grid->m_param_mem_map[offset] = it->second;
+	    kd_entry_1->kernel_grid->m_param_mem_base_map[offset] = it_base->second;
          } else { // splitted -> modifying parameter memory maps
             DEV_RUNTIME_REPORT("DCC post-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << (it->first-(total_thread_2 - remaining_count)) );
             it->second->write((size_t)total_thread_offset, 4, &remaining_count, NULL, NULL);
             new_map[it->first-(total_thread_2 - remaining_count)] = it->second;
+	    new_map_base[it_base->first-(total_thread_2-remaining_count)] = it_base->second;
          }
 
          switch(g_app_name){
@@ -832,11 +843,14 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       if(split && remaining){
          //new_map[split_size] = new_mspace;
          kd_entry_2->kernel_grid->m_param_mem_map.clear();
-         for(it=new_map.begin(); it!=new_map.end(); it++){
+         kd_entry_2->kernel_grid->m_param_mem_base_map.clear();
+         for(it=new_map.begin(), it_base=new_map_base.begin(); it!=new_map.end(); it++, it_base++){
             kd_entry_2->kernel_grid->m_param_mem_map[it->first] = it->second;
+	    kd_entry_2->kernel_grid->m_param_mem_base_map[it_base->first] = it_base->second;
             DEV_RUNTIME_REPORT("DCC post-split: copy param mem map at offset " << it->first << " back to kernel " << kd_entry_2->kernel_grid->get_uid());
          }
          kd_entry_2->kernel_grid->set_param_mem(new_mspace);
+         kd_entry_2->kernel_grid->set_param_mem_base(new_map_base.begin()->second);
       }
 
       /*/ set new kernel as candidate
@@ -904,7 +918,7 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
          //get parameter_buffer from the cudaLaunchDeviceV2_param0
          assert(size == sizeof(void *));
          thread->m_local_mem->read(from_addr, size, &parameter_buffer);
-         if( g_dyn_child_thread_consolidation ) {
+         if( g_dyn_child_thread_consolidation && g_dcc_kernel_param_onchip ) {
             assert((size_t)parameter_buffer >= DCC_PARAM_START);
             DEV_RUNTIME_REPORT("Parameter buffer locating at on-chip kernel parameter memory " << parameter_buffer);
          } else {
@@ -948,35 +962,38 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                   break;
                }
             }
-            kernel_param_usage = per_kernel_param_usage[g_app_name];
-            if(kd_entry->kernel_grid->name().find(mis_k1) != std::string::npos || (kd_entry->kernel_grid->name().find(pr_k2) != std::string::npos))
-               kernel_param_usage += 8;
-            param_buffer_usage += kernel_param_usage;
-            DEV_RUNTIME_REPORT("DCC: current parameter buffer usage = " << param_buffer_usage);
-            if( param_buffer_usage * 100 > g_max_param_buffer_size * g_param_buffer_thres_high){
-               if(g_app_name == BFS || /*g_app_name == AMR ||*/ g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
-                 (g_app_name == MIS || g_app_name == BC || g_app_name == KMEANS/*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
-                  param_buffer_full = true;
-               }
-               DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds " << g_param_buffer_thres_high << "% (size = " << g_max_param_buffer_size << ")");
-            }
-            if(param_buffer_usage > param_buffer_size){
-               param_buffer_size = param_buffer_usage;
-               DEV_RUNTIME_REPORT("DCC: maximum parameter buffer usage = " << param_buffer_size);
-            }
-            /* modify target_parent_list to block the execution of parent warps if necessary */
-            kernel_info_t & parent_grid = thread->get_kernel();
-            if(param_buffer_full){
-               if(std::find(target_parent_list.begin(), target_parent_list.end(), parent_grid.get_uid()) == target_parent_list.end()){
-                  target_parent_list.push_back(parent_grid.get_uid());
-                  DEV_RUNTIME_REPORT("DCC: add parent kernel " << parent_grid.get_uid() << " to target parent list.");
-               }
-            } else {
-               if(std::find(target_parent_list.begin(), target_parent_list.end(), parent_grid.get_uid()) != target_parent_list.end()){
-                  target_parent_list.remove(parent_grid.get_uid());
-                  DEV_RUNTIME_REPORT("DCC: remove parent kernel " << parent_grid.get_uid() << " to target parent list.");
-               }
-            }
+
+	    if( g_dcc_kernel_param_onchip ){	// kernel parameters are stored in on-chip SRAM, apply parent-warp throttling if necessary
+	       kernel_param_usage = per_kernel_param_usage[g_app_name];
+	       if(kd_entry->kernel_grid->name().find(mis_k1) != std::string::npos || (kd_entry->kernel_grid->name().find(pr_k2) != std::string::npos))
+		  kernel_param_usage += 8;
+	       param_buffer_usage += kernel_param_usage;
+	       DEV_RUNTIME_REPORT("DCC: current parameter buffer usage = " << param_buffer_usage);
+	       if( param_buffer_usage * 100 > g_max_param_buffer_size * g_param_buffer_thres_high){
+		  if(g_app_name == BFS || /*g_app_name == AMR ||*/ g_app_name == JOIN || g_app_name == SSSP || g_app_name == BFS_RODINIA || g_app_name == PAGERANK || 
+			(g_app_name == MIS || g_app_name == BC || g_app_name == KMEANS/*&& kd_entry->kernel_grid->name().find(mis_k2) != std::string::npos*/) ) {
+		     param_buffer_full = true;
+		  }
+		  DEV_RUNTIME_REPORT("DCC: parameter buffer usage exceeds " << g_param_buffer_thres_high << "% (size = " << g_max_param_buffer_size << ")");
+	       }
+	       if(param_buffer_usage > param_buffer_size){
+		  param_buffer_size = param_buffer_usage;
+		  DEV_RUNTIME_REPORT("DCC: maximum parameter buffer usage = " << param_buffer_size);
+	       }
+	       /* modify target_parent_list to block the execution of parent warps if necessary */
+	       kernel_info_t & parent_grid = thread->get_kernel();
+	       if(param_buffer_full){
+		  if(std::find(target_parent_list.begin(), target_parent_list.end(), parent_grid.get_uid()) == target_parent_list.end()){
+		     target_parent_list.push_back(parent_grid.get_uid());
+		     DEV_RUNTIME_REPORT("DCC: add parent kernel " << parent_grid.get_uid() << " to target parent list.");
+		  }
+	       } else {
+		  if(std::find(target_parent_list.begin(), target_parent_list.end(), parent_grid.get_uid()) != target_parent_list.end()){
+		     target_parent_list.remove(parent_grid.get_uid());
+		     DEV_RUNTIME_REPORT("DCC: remove parent kernel " << parent_grid.get_uid() << " to target parent list.");
+		  }
+	       }
+	    }
 
          } else {
             //find if the same kernel has been launched before
@@ -995,13 +1012,16 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                  "), thread (" << thread->get_tid().x << ", " << thread->get_tid().y << ", " << thread->get_tid().z <<
                  ")");
                device_grid->set_parent(&parent_grid, thread->get_agg_group_id(), thread->get_ctaid(), thread->get_tid(), thread->get_block_idx(), thread->get_thread_idx());  
+	       uintptr_t tmp = (uintptr_t)parameter_buffer;
+	       device_grid->set_param_mem_base((addr_t) tmp);
                device_launch_op = device_launch_operation_t(device_grid, NULL, NULL, DEVICE_LAUNCH_CHILD);
                device_kernel_param_mem = device_grid->get_param_memory(-1); //native kernel param
                thread->get_kernel().block_state[thread->get_block_idx()].thread.reset(thread->get_thread_idx());
                DEV_RUNTIME_REPORT("Reset block state for block " << thread->get_block_idx() << " thread " << thread->get_thread_idx());
             }
             else { //launched before, as aggregated blocks
-               agg_block_group_t * agg_block_group = new agg_block_group_t(config.grid_dim, config.block_dim, device_grid);
+	       uintptr_t tmp = (uintptr_t)parameter_buffer;
+               agg_block_group_t * agg_block_group = new agg_block_group_t(config.grid_dim, config.block_dim, device_grid, (addr_t)tmp);
 
                //add aggregated blocks
                DEV_RUNTIME_REPORT("found launched grid with the same function " << device_grid->get_uid() << 
@@ -1110,6 +1130,11 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
 //                  kd_entry_2 = g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
                   kd_entry_2 = g_cuda_dcc_kernel_distributor.begin();
                   DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
+		  if(!g_dcc_kernel_param_onchip){
+		     unsigned long long last_expected_launch_time = (kd_entry_1->expected_launch_time > gpu_sim_cycle+gpu_tot_sim_cycle) ? kd_entry_1->expected_launch_time : gpu_sim_cycle+gpu_tot_sim_cycle;
+		     kd_entry_1->expected_launch_time = last_expected_launch_time + (AVG_L2_ACC_TIME * 2);
+		     DEV_RUNTIME_REPORT("DCC: expected launch time of kernel " << kd_entry_1->kernel_grid->get_uid() << " has increased to " << kd_entry_1->expected_launch_time);
+		  }
                }
             }
          }
@@ -1312,7 +1337,12 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
                         it2--;
                      }
                      DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
-                  }
+		     if(!g_dcc_kernel_param_onchip){
+			unsigned long long last_expected_launch_time = (it->expected_launch_time > gpu_sim_cycle+gpu_tot_sim_cycle) ? it->expected_launch_time : gpu_sim_cycle+gpu_tot_sim_cycle;
+			it->expected_launch_time = last_expected_launch_time + (AVG_L2_ACC_TIME * 2);
+			DEV_RUNTIME_REPORT("DCC: expected launch time of kernel " << it->kernel_grid->get_uid() << " has increased to " << it->expected_launch_time);
+		     }
+		  }
                   if ( target_merge_size != -1 && it->thread_count == target_merge_size) break;
                }
             }
@@ -1321,6 +1351,11 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
          fprintf(stderr, "%llu, %u, %d, %d, %d, %d, %d\n", gpu_tot_sim_cycle+gpu_sim_cycle, it->kernel_grid->get_uid(), it->thread_count, it->merge_count, parent_finished, no_more_kernel, enough_threads);
          it->kernel_grid->reset_block_state();
          pending_child_threads -= it->thread_count;
+	 // modeling off-chip kernel parameter read/write latency if necessary
+	 if(it->expected_launch_time > gpu_sim_cycle+gpu_tot_sim_cycle){
+	    it->kernel_grid->m_launch_latency += (it->expected_launch_time - (gpu_sim_cycle+gpu_tot_sim_cycle));
+	    DEV_RUNTIME_REPORT("DCC: " << it->expected_launch_time - (gpu_sim_cycle+gpu_tot_sim_cycle) << " extra kernel launch overhead has been added due to consolidation");
+	 }
          stream_operation stream_op = stream_operation(it->kernel_grid, g_ptx_sim_mode, it->stream);
          g_stream_manager->push(stream_op);
          // remove a kernel distributor entry after it is launched
