@@ -3006,7 +3006,7 @@ void shader_core_ctx::get_icnt_power_stats(long &n_simt_to_mem, long &n_mem_to_s
 	n_mem_to_simt += m_stats->n_mem_to_simt[m_sid];
 }
 
-bool shd_warp_t::functional_done() const
+inline bool shd_warp_t::functional_done() const
 {
 	return get_n_completed() == m_warp_size;
 }

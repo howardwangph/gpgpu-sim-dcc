@@ -100,8 +100,16 @@ void *gpgpu_sim_thread_concurrent(void*)
 	    printf("GPGPU-Sim: *** simulation thread starting and spinning waiting for work ***\n");
 	    fflush(stdout);
 	}
-	while( g_stream_manager->empty() && !g_sim_done )
-	    ;
+        unsigned int wait_amount = 100; 
+        unsigned int wait_cap = 100000; // 100ms 
+	while( g_stream_manager->empty() && !g_sim_done ){
+            // sleep to prevent CPU hog by empty spin
+            // sleep time increased exponentially ensure fast response when needed 
+            usleep(wait_amount); 
+            wait_amount *= 2; 
+            if (wait_amount > wait_cap) 
+               wait_amount = wait_cap; 
+	}
 	if(g_debug_execution >= 3) {
 	    printf("GPGPU-Sim: ** START simulation thread (detected work) **\n");
 	    g_stream_manager->print(stdout);

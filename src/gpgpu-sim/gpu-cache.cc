@@ -591,7 +591,7 @@ void cache_stats::get_sub_stats(struct cache_sub_stats &css) const{
     css = t_css;
 }
 
-bool cache_stats::check_valid(int type, int status) const{
+inline bool cache_stats::check_valid(int type, int status) const{
     ///
     /// Verify a valid access_type/access_status
     ///

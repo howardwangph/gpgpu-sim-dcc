@@ -312,11 +312,12 @@ stream_operation stream_manager::front()
     
     if(!m_service_stream_zero)
     {
-        std::list<struct CUstream_st*>::iterator s;
+        std::list<struct CUstream_st*>::iterator s, s_end;
+	s_end = m_streams.end();
 //        if(m_streams.size() != 0){
-        for( s=m_streams.begin(); s != m_streams.end(); s++) {
+        for( s=m_streams.begin(); s != s_end/*m_streams.end()*/; s++) {
             CUstream_st *stream = *s;
-            if( !stream->busy() && !stream->empty() ) {
+            if( !stream->empty()/*busy()*/ && !stream->busy()/*empty()*/ ) {
                 result = stream->next();
                 if( result.is_kernel() ) {
                     unsigned grid_id = result.get_kernel()->get_uid();
@@ -368,9 +369,10 @@ bool stream_manager::concurrent_streams_empty()
 {
     bool result = true;
     // called by gpu simulation thread
-    std::list<struct CUstream_st *>::iterator s;
+    std::list<struct CUstream_st *>::iterator s, s_end;
+    s_end = m_streams.end();
 //        if(m_streams.size() != 0){
-    for( s=m_streams.begin(); s!=m_streams.end();++s ) {
+    for( s=m_streams.begin(); s!=s_end/*m_streams.end()*/;++s ) {
         struct CUstream_st *stream = *s;
         if( !stream->empty() ) {
 //            stream->print(stdout);
@@ -401,12 +403,15 @@ bool stream_manager::empty_protected()
 
 bool stream_manager::empty()
 {
-    bool result = true;
+//    bool result = true;
     if( !concurrent_streams_empty() ) 
-        result = false;
+	    return false;
+//        result = false;
     if( !m_stream_zero.empty() ) 
-        result = false;
-    return result;
+	    return false;
+//        result = false;
+//    return result;
+    return true;
 }
 
 

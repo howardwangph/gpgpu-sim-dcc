@@ -1092,7 +1092,7 @@ class warp_inst_t: public inst_t {
 		void broadcast_barrier_reduction( const active_mask_t& access_mask);
 		void do_atomic(bool forceDo=false);
 		void do_atomic( const active_mask_t& access_mask, bool forceDo=false );
-		void clear() 
+		inline void clear() 
 		{ 
 			m_empty=true; 
 		}
@@ -1177,10 +1177,10 @@ class warp_inst_t: public inst_t {
 			for (int i=(int)m_config->warp_size-1; i>=0; i--)
 				fprintf(fp, "%c", ((m_warp_active_mask[i])?'1':'0') );
 		}
-		bool active( unsigned thread ) const { return m_warp_active_mask.test(thread); }
+		inline bool active( unsigned thread ) const { return m_warp_active_mask.test(thread); }
 		unsigned active_count() const { return m_warp_active_mask.count(); }
 		unsigned issued_count() const { assert(m_empty == false); return m_warp_issued_mask.count(); }  // for instruction counting 
-		bool empty() const { return m_empty; }
+		inline bool empty() const { return m_empty; }
 		unsigned warp_id() const 
 		{ 
 			assert( !m_empty );
@@ -1261,7 +1261,7 @@ class warp_inst_t: public inst_t {
 
 };
 
-void move_warp( warp_inst_t *&dst, warp_inst_t *&src );
+inline void move_warp( warp_inst_t *&dst, warp_inst_t *&src );
 
 size_t get_kernel_code_size( class function_info *entry );
 

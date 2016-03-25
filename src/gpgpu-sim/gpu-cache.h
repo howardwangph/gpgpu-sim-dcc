@@ -522,7 +522,7 @@ public:
 
     void sample_cache_port_utility(bool data_port_busy, bool fill_port_busy); 
 private:
-    bool check_valid(int type, int status) const;
+    inline bool check_valid(int type, int status) const;
 
     std::vector< std::vector<unsigned> > m_stats;
 

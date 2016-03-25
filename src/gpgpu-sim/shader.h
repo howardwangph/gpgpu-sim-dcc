@@ -138,7 +138,7 @@ class shd_warp_t {
 			m_cdp_dummy = false;
 		}
 
-		bool functional_done() const;
+		inline bool functional_done() const;
 		bool waiting(); // not const due to membar
 		bool hardware_done() const;
 
@@ -148,7 +148,7 @@ class shd_warp_t {
 		void print( FILE *fout ) const;
 		void print_ibuffer( FILE *fout ) const;
 
-		unsigned get_n_completed() const { return n_completed; }
+		inline unsigned get_n_completed() const { return n_completed; }
 		void set_completed( unsigned lane ) 
 		{ 
 //			assert( m_active_threads.test(lane) );
@@ -1063,9 +1063,11 @@ class pipelined_simd_unit : public simd_function_unit {
 		{
 			active_mask_t active_lanes;
 			active_lanes.reset();
-			for( unsigned stage=0; (stage+1)<m_pipeline_depth; stage++ ){
-				if( !m_pipeline_reg[stage]->empty() )
-					active_lanes|=m_pipeline_reg[stage]->get_active_mask();
+			unsigned stage;
+			warp_inst_t *stage_reg;
+			for( stage=0, stage_reg = m_pipeline_reg[0]; (stage+1)<m_pipeline_depth; stage++, stage_reg++ ){
+				if( /*!m_pipeline_reg[stage]*/!stage_reg->empty() )
+					active_lanes|=/*m_pipeline_reg[stage]*/stage_reg->get_active_mask();
 			}
 			return active_lanes.count();
 		}
@@ -1948,11 +1950,15 @@ class shader_core_ctx : public core_t {
 
 		//Jin: shader occupancy stats
 	public:
-		void inc_shader_warp_activity() {
-			for(unsigned int i = 0; i < m_config->n_thread_per_shader; i+= m_config->warp_size) {
-				unsigned int warp_id = i / m_config->warp_size;
+		inline void inc_shader_warp_activity() {
+			unsigned int warp_cnt = m_config->n_thread_per_shader / m_config->warp_size;
+			for(unsigned int warp_id = 0; warp_id < warp_cnt; warp_id++ ){
+//			for(unsigned int i = 0; i < m_config->n_thread_per_shader; i+= m_config->warp_size) {
+//				unsigned int warp_id = i / m_config->warp_size;
 				bool warp_active = false;
-				for(unsigned int j = i; j < i+ m_config->warp_size; j++) {
+				unsigned int tid = warp_id * m_config->warp_size;
+				for(unsigned int j = tid; j < tid+m_config->warp_size; j++ ){
+//				for(unsigned int j = i; j < i+ m_config->warp_size; j++) {
 					if(m_occupied_hwtid.test(j)) {
 						warp_active = true;
 						break;
