@@ -591,7 +591,7 @@ void cache_stats::get_sub_stats(struct cache_sub_stats &css) const{
     css = t_css;
 }
 
-inline bool cache_stats::check_valid(int type, int status) const{
+/*inline bool cache_stats::check_valid(int type, int status) const{
     ///
     /// Verify a valid access_type/access_status
     ///
@@ -599,7 +599,7 @@ inline bool cache_stats::check_valid(int type, int status) const{
         return true;
     else
         return false;
-}
+}*/
 
 void cache_stats::sample_cache_port_utility(bool data_port_busy, bool fill_port_busy) 
 {

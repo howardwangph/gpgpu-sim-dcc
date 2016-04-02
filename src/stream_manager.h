@@ -215,7 +215,13 @@ private:
 struct CUstream_st {
 public:
     CUstream_st(); 
-    bool empty();
+//    bool empty();
+    inline bool empty(){
+       pthread_mutex_lock(&m_lock);
+       bool empty = m_operations.empty();
+       pthread_mutex_unlock(&m_lock);
+       return empty;
+    }
     bool busy();
     void synchronize();
     void push( const stream_operation &op );

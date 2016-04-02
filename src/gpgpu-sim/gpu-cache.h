@@ -522,7 +522,16 @@ public:
 
     void sample_cache_port_utility(bool data_port_busy, bool fill_port_busy); 
 private:
-    inline bool check_valid(int type, int status) const;
+//    inline bool check_valid(int type, int status) const;
+    inline bool check_valid(int type, int status) const{
+    ///
+    /// Verify a valid access_type/access_status
+    ///
+    if((type >= 0) && (type < NUM_MEM_ACCESS_TYPE) && (status >= 0) && (status < NUM_CACHE_REQUEST_STATUS))
+        return true;
+    else
+        return false;
+    }
 
     std::vector< std::vector<unsigned> > m_stats;
 

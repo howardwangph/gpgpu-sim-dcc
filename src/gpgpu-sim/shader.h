@@ -138,7 +138,11 @@ class shd_warp_t {
 			m_cdp_dummy = false;
 		}
 
-		inline bool functional_done() const;
+		//inline bool functional_done() const;
+		inline bool functional_done() const
+		{
+			return get_n_completed() == m_warp_size;
+		}
 		bool waiting(); // not const due to membar
 		bool hardware_done() const;
 
@@ -1064,10 +1068,10 @@ class pipelined_simd_unit : public simd_function_unit {
 			active_mask_t active_lanes;
 			active_lanes.reset();
 			unsigned stage;
-			warp_inst_t *stage_reg;
-			for( stage=0, stage_reg = m_pipeline_reg[0]; (stage+1)<m_pipeline_depth; stage++, stage_reg++ ){
-				if( /*!m_pipeline_reg[stage]*/!stage_reg->empty() )
-					active_lanes|=/*m_pipeline_reg[stage]*/stage_reg->get_active_mask();
+//			warp_inst_t *stage_reg;
+			for( stage=0/*, stage_reg = m_pipeline_reg[0]*/; (stage+1)<m_pipeline_depth; stage++/*, stage_reg++*/ ){
+				if( !m_pipeline_reg[stage]/*!stage_reg*/->empty() )
+					active_lanes|=m_pipeline_reg[stage]/*stage_reg*/->get_active_mask();
 			}
 			return active_lanes.count();
 		}

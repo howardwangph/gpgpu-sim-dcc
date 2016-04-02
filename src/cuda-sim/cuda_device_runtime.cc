@@ -136,6 +136,7 @@ signed long long param_buffer_size = 0, param_buffer_usage = 0;
 signed int kernel_param_usage = 0;
 static const signed per_kernel_param_usage[10] = {12, 16, 16, 12, 0, 8, 8, 16, 12, 12};
 static const unsigned per_kernel_optimal_child_size[10] = {16640, 1664/*9984*/, 16640/*23296*/, 9984, -1, 16640, 16640, -1, -1, -1};
+static const unsigned per_kernel_offset[10] = {0, 40, 16, 0, 0, 0, 0, 32, 8, 0};
 //static const unsigned per_kernel_parent_block_cnt[10] = {3, -1, 2, 3, -1, -1, -1, -1, -1, -1};
 application_id g_app_name = BFS;
 bool g_restrict_parent_block_count = false;
@@ -166,6 +167,12 @@ bool compare_dcc_kd_entry(const dcc_kernel_distributor_t &a, const dcc_kernel_di
 {
    return (a.thread_count > b.thread_count);
 }
+
+bool compare_dcc_kd_entry_offset(const dcc_kernel_distributor_t &a, const dcc_kernel_distributor_t &b)
+{
+   return (a.offset_base < b.offset_base);
+}
+
 
 //Handling device runtime api:
 //void * cudaGetParameterBufferV2(void *func, dim3 grid_dimension, dim3 block_dimension, unsigned int shared_memSize)
@@ -343,7 +350,7 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
    int offset_a_1, offset_a_2, offset_b_1, offset_b_2;
    unsigned int total_thread_sum, total_thread_offset;
    unsigned int kernel_param_size;
-   int new_offset_b_1, new_offset_b_2;
+   int new_offset_a_2, new_offset_b_2;
    unsigned int num_blocks, thread_per_block;
    unsigned int stride_1, stride_2;
    dim3 gDim;
@@ -356,10 +363,10 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       //[offset_a (4B), total_thread (4B), base_a (8B), base_b (8B), offset_b (4B)]
       mspace1->read((size_t) 0, 4, &offset_a_1);
       mspace1->read((size_t) 4, 4, &total_thread_1);
-      mspace1->read((size_t)24, 4, &offset_b_1);
+      //mspace1->read((size_t)24, 4, &offset_b_1);
       mspace2->read((size_t) 0, 4, &offset_a_2);
       mspace2->read((size_t) 4, 4, &total_thread_2);
-      mspace2->read((size_t)24, 4, &offset_b_2);
+      //mspace2->read((size_t)24, 4, &offset_b_2);
 
       assert( kd_entry_1->thread_count == total_thread_1 );
       assert( kd_entry_2->thread_count == total_thread_2 );
@@ -394,8 +401,8 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       mspace2->read((size_t)16, 4, &offset_a_2);
       mspace1->read((size_t)20, 4, &total_thread_1);
       mspace2->read((size_t)20, 4, &total_thread_2);
-      mspace1->read((size_t)24, 4, &offset_b_1);
-      mspace2->read((size_t)24, 4, &offset_b_2);
+      //mspace1->read((size_t)24, 4, &offset_b_1);
+      //mspace2->read((size_t)24, 4, &offset_b_2);
       
 //      assert( kd_entry_1->thread_count == total_thread_1 );
 //      assert( kd_entry_2->thread_count == total_thread_2 );
@@ -523,14 +530,14 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
       mspace2->read((size_t)32, 4, &offset_a_2);
       mspace1->read((size_t) 0, 4, &total_thread_1);
       mspace2->read((size_t) 0, 4, &total_thread_2);
-      mspace1->read((size_t) 4, 4, &offset_b_1);
-      mspace2->read((size_t) 4, 4, &offset_b_2);
-      mspace1->read((size_t) 8, 4, &stride_1);
-      mspace2->read((size_t) 8, 4, &stride_2);
+//      mspace1->read((size_t) 4, 4, &offset_b_1);
+//      mspace2->read((size_t) 4, 4, &offset_b_2);
+//      mspace1->read((size_t) 8, 4, &stride_1);
+//      mspace2->read((size_t) 8, 4, &stride_2);
 
       assert( kd_entry_1->thread_count == total_thread_1 );
       assert( kd_entry_2->thread_count == total_thread_2 );
-      assert( stride_1 == stride_2 );
+//      assert( stride_1 == stride_2 );
 
       parent_block_idx_1 = kd_entry_1->kernel_grid->m_parent_threads.front()->get_block_idx();
       parent_block_idx_2 = kd_entry_2->kernel_grid->m_parent_threads.front()->get_block_idx();
@@ -690,186 +697,199 @@ bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dc
 
          switch(g_app_name){
          case BFS:
-            it->second->read((size_t) 0, 4, &offset_b_1);
+//            mspace1->read((size_t)24, 4, &offset_b_1);
             it->second->read((size_t)24, 4, &offset_b_2);
+            it->second->read((size_t) 0, 4, &offset_a_2);
             if(remaining && !split && boundary ){
-               new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
+               new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
                new_offset_b_2 = offset_b_2 + total_thread_2 - remaining_count;
-               new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
+               new_mspace->write((size_t) 0, 4, &new_offset_a_2, NULL, NULL);
                new_mspace->write((size_t)24, 4, &new_offset_b_2, NULL, NULL);
+
+	       kd_entry_2->offset_base = new_offset_a_2;
             }
             if(!split){
-               offset_b_1 -= total_thread_1;
+               offset_a_2 -= total_thread_1;
                offset_b_2 -= total_thread_1;
             } else {
-               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_a_2 += (total_thread_2 - remaining_count);
                offset_b_2 += (total_thread_2 - remaining_count);
             }
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
+            it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
             it->second->write((size_t)24, 4, &offset_b_2, NULL, NULL);
             break;
          case AMR:
-            it->second->read((size_t)40, 4, &offset_b_1);
+            it->second->read((size_t)40, 4, &offset_a_2);
             if(remaining && !split && boundary){
-               new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
-               new_mspace->write((size_t)40, 4, &new_offset_b_1, NULL, NULL);
+               new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
+               new_mspace->write((size_t)40, 4, &new_offset_a_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
             }
             if(!split){
-               offset_b_1 -= total_thread_1;
+               offset_a_2 -= total_thread_1;
             }else{
-               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_a_2 += (total_thread_2 - remaining_count);
             }
-            it->second->write((size_t)40, 4, &offset_b_1, NULL, NULL);
+            it->second->write((size_t)40, 4, &offset_a_2, NULL, NULL);
             break;
          case JOIN:
-            it->second->read((size_t)16, 4, &offset_b_1);
+//            mspace1->read((size_t)24, 4, &offset_b_1);
             it->second->read((size_t)24, 4, &offset_b_2);
+            it->second->read((size_t)16, 4, &offset_a_2);
             if(remaining && !split && boundary){
-               new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
+               new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
                new_offset_b_2 = offset_b_2 + total_thread_2 - remaining_count;
-               new_mspace->write((size_t)16, 4, &new_offset_b_1, NULL, NULL);
+               new_mspace->write((size_t)16, 4, &new_offset_a_2, NULL, NULL);
                new_mspace->write((size_t)24, 4, &new_offset_b_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
             }
             if(!split){
-               offset_b_1 -= total_thread_1;
+               offset_a_2 -= total_thread_1;
                offset_b_2 -= total_thread_1;
             } else {
-               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_a_2 += (total_thread_2 - remaining_count);
                offset_b_2 += (total_thread_2 - remaining_count);
             }
-            it->second->write((size_t)16, 4, &offset_b_1, NULL, NULL);
+            it->second->write((size_t)16, 4, &offset_a_2, NULL, NULL);
             it->second->write((size_t)24, 4, &offset_b_2, NULL, NULL);
             break;
          case SSSP:
-            it->second->read((size_t) 0, 4, &offset_b_1);
+            it->second->read((size_t) 0, 4, &offset_a_2);
             if(remaining && !split && boundary){
-               new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
-               new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
+               new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
+               new_mspace->write((size_t) 0, 4, &new_offset_a_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
             }
             if(!split){
-               offset_b_1 -= total_thread_1;
+               offset_a_2 -= total_thread_1;
             }else{
-               offset_b_1 += (total_thread_2 - remaining_count);
+               offset_a_2 += (total_thread_2 - remaining_count);
             }
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
+            it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
             break;
          case COLOR:
             assert(!remaining && !split && !boundary);
-            it->second->read((size_t) 0, 4, &offset_b_1);
-            offset_b_1 -= total_thread_1;
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
+            it->second->read((size_t) 0, 4, &offset_a_2);
+            offset_a_2 -= total_thread_1;
+            it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
             break;
          case MIS:
 //            if(found1 != std::string::npos) assert(!remaining && !split && !boundary);
-            it->second->read((size_t) 0, 4, &offset_b_1);
+            it->second->read((size_t) 0, 4, &offset_a_2);
 //            if(found2 != std::string::npos){
-               if(remaining && !split && boundary){
-                  new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
-                  new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
-               }
-               if(!split){
-                  offset_b_1 -= total_thread_1;
-               }else{
-                  offset_b_1 += (total_thread_2 - remaining_count);
-               }
-//            } else {
-//               offset_b_1 -= total_thread_1;
-//            }
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
-            break;
-         case PAGERANK:
-            /*if(found2 != std::string::npos) assert(!remaining && !split && !boundary); */
-            it->second->read((size_t) 0, 4, &offset_b_1);
-//            if(found1 != std::string::npos){
-               if(remaining && !split && boundary){
-                  new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
-                  new_mspace->write((size_t) 0, 4, &new_offset_b_1, NULL, NULL);
-               }
-               if(!split){
-                  offset_b_1 -= total_thread_1;
-               }else{
-                  offset_b_1 += (total_thread_2 - remaining_count);
-               }
-//            } else {
-//               offset_b_1 -= total_thread_1;
-//            }
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
-            break;
-         case KMEANS:
-            assert(!remaining && !split && !boundary);
-            it->second->read((size_t)32, 4, &offset_b_1);
-            offset_b_1 -= total_thread_1;
-            it->second->write((size_t)32, 4, &offset_b_1, NULL, NULL);
-            it->second->read((size_t) 4, 4, &offset_b_2);
-            offset_b_2 -= total_thread_1 * stride_1;
-            it->second->write((size_t) 4, 4, &offset_b_2, NULL, NULL);
-            break;
-         case BFS_RODINIA:
-            it->second->read((size_t) 8, 4, &offset_b_1);
-            if(remaining && !split && boundary){
-               new_offset_b_1 = offset_b_1 + total_thread_2 - remaining_count;
-               new_mspace->write((size_t) 8, 4, &new_offset_b_1, NULL, NULL);
-            }
-            if(!split){
-               offset_b_1 -= total_thread_1;
-            }else{
-               offset_b_1 += (total_thread_2 - remaining_count);
-            }
-            it->second->write((size_t) 8, 4, &offset_b_1, NULL, NULL);
-            break;
-         case BC:
-            assert(!remaining && !split && !boundary);
-            it->second->read((size_t) 0, 4, &offset_b_1);
-            offset_b_1 -= total_thread_1;
-            it->second->write((size_t) 0, 4, &offset_b_1, NULL, NULL);
-            break;
-         default:
-            DEV_RUNTIME_REPORT("Dynamic Child-thread Consolidation: unsupported application");
-            assert(0);
-            break;
-         }
+	    if(remaining && !split && boundary){
+	       new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
+	       new_mspace->write((size_t) 0, 4, &new_offset_a_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
+	    }
+	    if(!split){
+	       offset_a_2 -= total_thread_1;
+	    }else{
+	       offset_a_2 += (total_thread_2 - remaining_count);
+	    }
+	    //            } else {
+	    //               offset_b_1 -= total_thread_1;
+	    //            }
+	    it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
+	    break;
+	    case PAGERANK:
+	    /*if(found2 != std::string::npos) assert(!remaining && !split && !boundary); */
+	    it->second->read((size_t) 0, 4, &offset_a_2);
+	    //            if(found1 != std::string::npos){
+	    if(remaining && !split && boundary){
+	       new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
+	       new_mspace->write((size_t) 0, 4, &new_offset_a_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
+	    }
+	    if(!split){
+	       offset_a_2 -= total_thread_1;
+	    }else{
+	       offset_a_2 += (total_thread_2 - remaining_count);
+	    }
+	    //            } else {
+	    //               offset_b_1 -= total_thread_1;
+	    //            }
+	    it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
+	    break;
+	    case KMEANS:
+	    assert(!remaining && !split && !boundary);
+	    mspace1->read((size_t) 8, 4, &stride_1);
+	    it->second->read((size_t) 8, 4, &stride_2);
+	    assert(stride_1 == stride_2);
+	    it->second->read((size_t)32, 4, &offset_a_2);
+	    offset_a_2 -= total_thread_1;
+	    it->second->write((size_t)32, 4, &offset_a_2, NULL, NULL);
+	    it->second->read((size_t) 4, 4, &offset_b_2);
+	    offset_b_2 -= total_thread_1 * stride_1;
+	    it->second->write((size_t) 4, 4, &offset_b_2, NULL, NULL);
+	    break;
+	    case BFS_RODINIA:
+	    it->second->read((size_t) 8, 4, &offset_a_2);
+	    if(remaining && !split && boundary){
+	       new_offset_a_2 = offset_a_2 + total_thread_2 - remaining_count;
+	       new_mspace->write((size_t) 8, 4, &new_offset_a_2, NULL, NULL);
+	       kd_entry_2->offset_base = new_offset_a_2;
+	    }
+	    if(!split){
+	       offset_a_2 -= total_thread_1;
+	    }else{
+	       offset_a_2 += (total_thread_2 - remaining_count);
+	    }
+	    it->second->write((size_t) 8, 4, &offset_a_2, NULL, NULL);
+	    break;
+	    case BC:
+	    assert(!remaining && !split && !boundary);
+	    it->second->read((size_t) 0, 4, &offset_a_2);
+	    offset_a_2 -= total_thread_1;
+	    it->second->write((size_t) 0, 4, &offset_a_2, NULL, NULL);
+	    break;
+	    default:
+	    DEV_RUNTIME_REPORT("Dynamic Child-thread Consolidation: unsupported application");
+	    assert(0);
+	    break;
+	 }
 
-         if(!split){
-//            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
-            //unsigned tmp_key = it->first;
-            //it--;
-            //kd_entry_2->kernel_grid->m_param_mem_map.erase(tmp_key);
-            if(boundary){
-               split = true;
-            }
-         }
+	 if(!split){
+	    //            DEV_RUNTIME_REPORT("DCC pre-split: copy kernel param " << it->second << " old offset " << it->first << " new offset " << offset );
+	    //unsigned tmp_key = it->first;
+	    //it--;
+	    //kd_entry_2->kernel_grid->m_param_mem_map.erase(tmp_key);
+	    if(boundary){
+	       split = true;
+	    }
+	 }
       }
 
       if(split && remaining){
-         //new_map[split_size] = new_mspace;
-         kd_entry_2->kernel_grid->m_param_mem_map.clear();
-         kd_entry_2->kernel_grid->m_param_mem_base_map.clear();
-         for(it=new_map.begin(), it_base=new_map_base.begin(); it!=new_map.end(); it++, it_base++){
-            kd_entry_2->kernel_grid->m_param_mem_map[it->first] = it->second;
+	 //new_map[split_size] = new_mspace;
+	 kd_entry_2->kernel_grid->m_param_mem_map.clear();
+	 kd_entry_2->kernel_grid->m_param_mem_base_map.clear();
+	 for(it=new_map.begin(), it_base=new_map_base.begin(); it!=new_map.end(); it++, it_base++){
+	    kd_entry_2->kernel_grid->m_param_mem_map[it->first] = it->second;
 	    kd_entry_2->kernel_grid->m_param_mem_base_map[it_base->first] = it_base->second;
-            DEV_RUNTIME_REPORT("DCC post-split: copy param mem map at offset " << it->first << " back to kernel " << kd_entry_2->kernel_grid->get_uid());
-         }
-         kd_entry_2->kernel_grid->set_param_mem(new_mspace);
-         kd_entry_2->kernel_grid->set_param_mem_base(new_map_base.begin()->second);
+	    DEV_RUNTIME_REPORT("DCC post-split: copy param mem map at offset " << it->first << " back to kernel " << kd_entry_2->kernel_grid->get_uid());
+	 }
+	 kd_entry_2->kernel_grid->set_param_mem(new_mspace);
+	 kd_entry_2->kernel_grid->set_param_mem_base(new_map_base.begin()->second);
       }
 
       /*/ set new kernel as candidate
-        if ( (total_thread_sum % thread_per_block == 0) || ( (total_thread_sum % thread_per_block) > (unsigned int)(0.9 * thread_per_block)  )){
-        kd_entry_1->candidate = true;
-        DEV_RUNTIME_REPORT("DCC: set child kernel " << kd_entry_1->kernel_grid << " as candidate");
-        } else {
-        kd_entry_1->candidate = false;
-        }*/
+	if ( (total_thread_sum % thread_per_block == 0) || ( (total_thread_sum % thread_per_block) > (unsigned int)(0.9 * thread_per_block)  )){
+	kd_entry_1->candidate = true;
+	DEV_RUNTIME_REPORT("DCC: set child kernel " << kd_entry_1->kernel_grid << " as candidate");
+	} else {
+	kd_entry_1->candidate = false;
+	}*/
 
       // set up parent thread and merge count
       if(!remaining){
-         while(!(kd_entry_2->kernel_grid->m_parent_threads.empty())){
-            kd_entry_1->kernel_grid->add_parent(kd_entry_2->kernel_grid->get_parent(), kd_entry_2->kernel_grid->m_parent_threads.front());
-            kd_entry_2->kernel_grid->m_parent_threads.pop_front();
-         }
-         kd_entry_2->kernel_grid->get_parent()->remove_child(kd_entry_2->kernel_grid);
+	 while(!(kd_entry_2->kernel_grid->m_parent_threads.empty())){
+	    kd_entry_1->kernel_grid->add_parent(kd_entry_2->kernel_grid->get_parent(), kd_entry_2->kernel_grid->m_parent_threads.front());
+	    kd_entry_2->kernel_grid->m_parent_threads.pop_front();
+	 }
+	 kd_entry_2->kernel_grid->get_parent()->remove_child(kd_entry_2->kernel_grid);
       } else {
-         std::list<ptx_thread_info *>::iterator mpt_it;
+	 std::list<ptx_thread_info *>::iterator mpt_it;
          for(mpt_it = kd_entry_2->kernel_grid->m_parent_threads.begin(); mpt_it != kd_entry_2->kernel_grid->m_parent_threads.end(); mpt_it++){
             kd_entry_1->kernel_grid->add_parent(kd_entry_2->kernel_grid->get_parent(), *mpt_it);
          }
@@ -955,6 +975,8 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
                   device_kernel_param_mem = kd_entry->kernel_grid->get_param_memory(-1); //get paramenter buffer
                   pending_child_threads += kd_entry->thread_count; //record pending child threads
                   k_dis = &(*kd_entry);
+		  k_dis->agg_group_id = thread->get_agg_group_id();
+		  k_dis->ctaid = thread->get_ctaid();
                   /* Parent-child dependency */
                   thread->get_kernel().block_state[thread->get_block_idx()].thread.reset(thread->get_thread_idx());
                   DEV_RUNTIME_REPORT("DCC: activate kernel distributor entry " << i << " with parameter buffer address " << parameter_buffer << ", kernel distributor now has " << pending_child_threads << " pending threads.");
@@ -1044,6 +1066,13 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             device_kernel_param_mem->write(param_start_address + n, 4, &oneword, NULL, NULL); 
          }
 
+	 if(g_dyn_child_thread_consolidation){
+	    //store offset value in kernel distributor entry
+	    unsigned int offset;
+	    device_kernel_param_mem->read((size_t)per_kernel_offset[g_app_name], 4, &offset);
+	    k_dis->offset_base = offset;
+	 }
+
       }
       else if(arg == 1) { //cudaStream for the child kernel
          if(!g_dyn_child_thread_consolidation){
@@ -1071,17 +1100,19 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
 
             kernel_info_t & parent_kernel = thread->get_kernel();
             if(child_stream == 0) { //default stream on device for current CTA
-               child_stream = parent_kernel.get_default_stream_cta(thread->get_agg_group_id(), thread->get_ctaid()); 
+//               child_stream = parent_kernel.get_default_stream_cta(thread->get_agg_group_id(), thread->get_ctaid()); 
                DEV_RUNTIME_REPORT("launching child kernel " << device_grid->get_uid() << 
-                 " to stream " << child_stream->get_uid() << ": " << child_stream);
+                 " w/o specifying child stream, child stream is determined after consolidation");
+	       k_dis->stream = NULL;
             }
             else {
                assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream) || g_stream_manager->has_stream(child_stream)); 
 //               assert(parent_kernel.cta_has_stream(thread->get_agg_group_id(), thread->get_ctaid(), child_stream)); 
                DEV_RUNTIME_REPORT("launching child kernel " << device_grid->get_uid() << 
                  " to stream " << child_stream->get_uid() << ": " << child_stream);
-            }
-            k_dis->stream = child_stream;
+	       k_dis->stream = child_stream;
+	    }
+//            k_dis->stream = child_stream;
          }
       }
 
@@ -1108,6 +1139,37 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
    //Po-Han: DCC implementation: try to merge existing child kernels
    //1) only valid kernels can be merged since they have the parameters
    if(g_dyn_child_thread_consolidation){
+
+      if( g_cuda_dcc_kernel_distributor.size() > 1 ){ //sort the kernel distributor with assending offset order
+	 g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry_offset);
+      }
+      std::list<dcc_kernel_distributor_t>::iterator kd_entry_1, kd_entry_2;
+      kd_entry_1 = g_cuda_dcc_kernel_distributor.begin();
+      kd_entry_2 = kd_entry_1; kd_entry_2++;
+      while(1){
+	 if(kd_entry_2 == g_cuda_dcc_kernel_distributor.end() || kd_entry_2->valid == false) break;
+	 if(!kd_entry_1->kernel_grid->name().compare(kd_entry_2->kernel_grid->name()) && 
+              kd_entry_1->kernel_grid->get_parent() == kd_entry_2->kernel_grid->get_parent()){
+	    if( kd_entry_1->offset_base + kd_entry_1->thread_count == kd_entry_2->offset_base ){ //pre-check if two kd_entry have consecutive memory address
+	       bool remained;
+	       bool merged = merge_two_kernel_distributor_entry( &(*kd_entry_1), &(*kd_entry_2), false, -1, remained );
+
+	       //	    if(merged){
+	       g_cuda_dcc_kernel_distributor.erase(kd_entry_2);
+	       kd_entry_2 = kd_entry_1; kd_entry_2++;
+	       DEV_RUNTIME_REPORT("DCC: successfully merged, kernel distrubutor now has " << g_cuda_dcc_kernel_distributor.size() << " entries.");
+	       if(!g_dcc_kernel_param_onchip){
+		  unsigned long long last_expected_launch_time = (kd_entry_1->expected_launch_time > gpu_sim_cycle+gpu_tot_sim_cycle) ? kd_entry_1->expected_launch_time : gpu_sim_cycle+gpu_tot_sim_cycle;
+		  kd_entry_1->expected_launch_time = last_expected_launch_time + (AVG_L2_ACC_TIME * 2);
+		  DEV_RUNTIME_REPORT("DCC: expected launch time of kernel " << kd_entry_1->kernel_grid->get_uid() << " has increased to " << kd_entry_1->expected_launch_time);
+	       }
+	    } else {
+	       kd_entry_1++; kd_entry_2++;
+	    }
+	 }
+      }
+
+#if 0
       std::list<dcc_kernel_distributor_t>::iterator kd_entry_1, kd_entry_2;
       for( kd_entry_1 = g_cuda_dcc_kernel_distributor.begin(); kd_entry_1 != g_cuda_dcc_kernel_distributor.end(); kd_entry_1++) {
          for( kd_entry_2 = g_cuda_dcc_kernel_distributor.begin(); kd_entry_2 != g_cuda_dcc_kernel_distributor.end(); kd_entry_2++ ) {
@@ -1139,12 +1201,13 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
             }
          }
       }
+#endif      
       if(g_stream_manager->gpu_can_start_kernel()){
-	      if(pending_child_threads > per_kernel_optimal_child_size[g_app_name] && per_kernel_optimal_child_size[g_app_name] != -1){
-		      DEV_RUNTIME_REPORT("DCC: enough child threads (" << per_kernel_optimal_child_size[g_app_name] << "), issue child kernels to reduce param buffer size.");
-		      launch_one_device_kernel(true, NULL, NULL);
-	      }
-/*	      if(param_buffer_full){
+	 if(pending_child_threads > per_kernel_optimal_child_size[g_app_name] && per_kernel_optimal_child_size[g_app_name] != -1){
+	    DEV_RUNTIME_REPORT("DCC: enough child threads (" << per_kernel_optimal_child_size[g_app_name] << "), issue child kernels to reduce param buffer size.");
+	    launch_one_device_kernel(true, NULL, NULL);
+	 }
+	 /*	      if(param_buffer_full){
 		      DEV_RUNTIME_REPORT("DCC: parameter buffer full, issue child kernels to reduce param buffer size.");
 		      launch_one_device_kernel(true, NULL, NULL);
 	      }*/
@@ -1235,11 +1298,13 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
       bool isPRkernel2 = false;
       size_t found2;
       if ( !g_cuda_dcc_kernel_distributor.empty() ){
-         if( launch_mode == NORMAL || launch_mode == PARENT_FINISHED ){
-            if( g_cuda_dcc_kernel_distributor.size() > 1 ) {
-               g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry);
-            }
-         }
+         if( g_cuda_dcc_kernel_distributor.size() > 1 ) {
+	    if( launch_mode == NORMAL ){
+	       g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry);
+	    } else if (launch_mode == PARENT_FINISHED ){
+	       g_cuda_dcc_kernel_distributor.sort(compare_dcc_kd_entry_offset);
+	    }
+	 }
          std::list<dcc_kernel_distributor_t>::iterator it;
 
          /* searching for target kernel distributor entry 
@@ -1355,6 +1420,9 @@ void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, pt
 	 if(it->expected_launch_time > gpu_sim_cycle+gpu_tot_sim_cycle){
 	    it->kernel_grid->m_launch_latency += (it->expected_launch_time - (gpu_sim_cycle+gpu_tot_sim_cycle));
 	    DEV_RUNTIME_REPORT("DCC: " << it->expected_launch_time - (gpu_sim_cycle+gpu_tot_sim_cycle) << " extra kernel launch overhead has been added due to consolidation");
+	 }
+	 if(it->stream == NULL){
+	    it->stream = it->kernel_grid->create_stream_cta(it->agg_group_id, it->ctaid);
 	 }
          stream_operation stream_op = stream_operation(it->kernel_grid, g_ptx_sim_mode, it->stream);
          g_stream_manager->push(stream_op);

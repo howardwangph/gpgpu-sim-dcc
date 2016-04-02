@@ -42,13 +42,14 @@ CUstream_st::CUstream_st()
     pthread_mutex_init(&m_lock,NULL);
 }
 
+/*
 bool CUstream_st::empty()
 {
     pthread_mutex_lock(&m_lock);
     bool empty = m_operations.empty();
     pthread_mutex_unlock(&m_lock);
     return empty;
-}
+}*/
 
 bool CUstream_st::busy()
 {

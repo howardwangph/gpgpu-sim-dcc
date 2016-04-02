@@ -1261,7 +1261,15 @@ class warp_inst_t: public inst_t {
 
 };
 
-inline void move_warp( warp_inst_t *&dst, warp_inst_t *&src );
+//inline void move_warp( warp_inst_t *&dst, warp_inst_t *&src );
+inline void move_warp( warp_inst_t *&dst, warp_inst_t *&src )
+{
+    assert( dst->empty() );
+    warp_inst_t* temp = dst;
+    dst = src;
+    src = temp;
+    src->clear();
+}
 
 size_t get_kernel_code_size( class function_info *entry );
 
