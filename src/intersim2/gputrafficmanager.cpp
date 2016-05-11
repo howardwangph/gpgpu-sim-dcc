@@ -195,7 +195,8 @@ void GPUTrafficManager::_GeneratePacket(int source, int stype, int cl, int time,
   
   //  Flit::FlitType packet_type = Flit::ANY_TYPE;
   int size = packet_size; //input size
-  int pid = _cur_pid++;
+  long long pid = _cur_pid++;
+  //int pid = _cur_pid++;
   assert(_cur_pid);
   int packet_destination = dest;
   bool record = false;

@@ -229,8 +229,10 @@ protected:
   vector<double> _warmup_threshold;
   vector<double> _acc_warmup_threshold;
 
-  int _cur_id;
-  int _cur_pid;
+  long long _cur_id;
+  long long _cur_pid;
+//  int _cur_id;
+//  int _cur_pid;
   int _time;
 
   set<int> _flits_to_watch;

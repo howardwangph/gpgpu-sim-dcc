@@ -39,7 +39,10 @@ CUstream_st::CUstream_st()
 {
     m_pending = false;
     m_uid = sm_next_stream_uid++;
-    pthread_mutex_init(&m_lock,NULL);
+    pthread_mutexattr_init(&m_attr);
+    pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&m_lock, &m_attr);
+//    pthread_mutex_init(&m_lock,NULL);
 }
 
 /*
@@ -183,6 +186,7 @@ bool stream_operation::do_operation( gpgpu_sim *gpu )
                 if(m_kernel->m_launch_latency)
                     m_kernel->m_launch_latency--;
                 if(g_debug_execution >= 3)
+//                if(g_debug_execution >= 1)
         	        printf("kernel %d: \'%s\', latency %u not ready to transfer to GPU hardware scheduler\n", 
                         m_kernel->get_uid(), m_kernel->name().c_str(), m_kernel->m_launch_latency);
                 return false;    

@@ -1511,8 +1511,8 @@ bool ldst_unit::memory_cycle( warp_inst_t &inst, mem_stage_stall_type &stall_rea
 		if (m_core->get_config()->gmem_skip_L1D) 
 			bypassL1D = true;
 		// Po-Han: global memory write should definitely bypass L1!!!
-	//	if (inst.is_store())
-	//		bypassL1D = true;
+		if (inst.is_store())
+			bypassL1D = true;
 	}
 
 	if( bypassL1D ) {

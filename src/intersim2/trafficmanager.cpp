@@ -785,7 +785,8 @@ void TrafficManager::_GeneratePacket( int source, int stype,
 
     Flit::FlitType packet_type = Flit::ANY_TYPE;
     int size = _GetNextPacketSize(cl); //input size 
-    int pid = _cur_pid++;
+    long long pid = _cur_pid++;
+    //int pid = _cur_pid++;
     assert(_cur_pid);
     int packet_destination = _traffic_pattern[cl]->dest(source);
     bool record = false;

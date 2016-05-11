@@ -391,6 +391,7 @@ void* gpgpu_t::gpu_malloc( size_t size )
 	}
 	m_dev_malloc += size;
 	if (size%256) m_dev_malloc += (256 - size%256); //align to 256 byte boundaries
+	if(m_dev_malloc == DCC_PARAM_END) m_dev_malloc = DCC_PARAM_START;
 	return(void*) result;
 }
 

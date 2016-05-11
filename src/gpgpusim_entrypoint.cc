@@ -132,8 +132,16 @@ void *gpgpu_sim_thread_concurrent(void*)
 	    // another kernel, the gpu is not re-initialized and the inter-kernel
 	    // behaviour may be incorrect. Check that a kernel has finished and
 	    // no other kernel is currently running.
-	    if(g_stream_manager->operation(&sim_cycles) && !g_the_gpu->active())
-		break;
+	    //if(g_stream_manager->operation(&sim_cycles) && !g_the_gpu->active())
+	    if(g_stream_manager->operation(&sim_cycles)){
+	       if(!g_the_gpu->active()){
+		  if(g_debug_execution >= 3){
+		     printf("GPGPU-Sim: ** operation = true and active = false --> break do-while **\n");
+		     fflush(stdout);
+		  }
+		  break;
+	       }
+	    }
 
 	    //functional simulation
 	    if( g_the_gpu->is_functional_sim()) {

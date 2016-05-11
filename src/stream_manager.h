@@ -215,7 +215,7 @@ private:
 struct CUstream_st {
 public:
     CUstream_st(); 
-//    bool empty();
+    //bool empty();
     inline bool empty(){
        pthread_mutex_lock(&m_lock);
        bool empty = m_operations.empty();
@@ -243,6 +243,7 @@ private:
     bool m_pending; // front operation has started but not yet completed
 
     pthread_mutex_t m_lock; // ensure only one host or gpu manipulates stream operation at one time
+    pthread_mutexattr_t m_attr;
 };
 
 class stream_manager {

@@ -480,9 +480,27 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 	option_parser_register(opp, "-dcc_param_onchip", OPT_BOOL,
 	      		&g_dcc_kernel_param_onchip, "Store child kernel parameters in on-chip SRAM buffer, Default: true", "1");
 
+	extern bool g_dcc_param_latency_during_consolidation;
+	option_parser_register(opp, "-dcc_extra_param_latency", OPT_BOOL,
+	      		&g_dcc_param_latency_during_consolidation, "Extra latency of reading/writing child kernel parameters during consolidation process, Default: false", "0");
+
 	option_parser_register(opp, "-restrict_parent_block_count", OPT_BOOL,
 	                &g_restrict_parent_block_count, "Restrict number of parent block to reserve resources for child kernels, Default: false",
 	                "0");
+
+	//Po-Han: hand-coded application id for DCC
+	extern application_id g_app_name;
+	option_parser_register(opp, "-application_name", OPT_INT32,
+			&g_app_name, "Test application id. Default: 0",
+			"0");
+
+	option_parser_register(opp, "-dcc_timeout_threshold", OPT_INT32,
+			&g_dcc_timeout_threshold, "DCC timeout threshold. Default: 200",
+			"200");
+	
+	option_parser_register(opp, "-dcc_version", OPT_INT32,
+			&g_dyn_child_thread_consolidation_version, "DCC version. Default: 2",
+			"2");
 
 	//Po-Han: hand-coded application id for DCC
 	extern application_id g_app_name;
@@ -1115,6 +1133,9 @@ void gpgpu_sim::gpu_print_stat(FILE * statfout)
 	extern unsigned param_buffer_size; 
 	fprintf(statfout, "max_KPB_usage = %u\n", param_buffer_size);
 
+	extern unsigned long long g_total_child_kernels, g_total_child_threads, g_total_kernel_fusion, g_total_ideal_kernel_fusion;
+	fprintf(statfout, "gpu_tot_child_kernels = %llu\ngpu_tot_child_threads = %llu\ngpu_tot_kernel_fusion = %llu\ngpu_tot_ideal_fusion = %llu\n", g_total_child_kernels, g_total_child_threads, g_total_kernel_fusion, g_total_ideal_kernel_fusion);
+
 	// performance counter for stalls due to congestion.
 	fprintf(statfout, "gpu_stall_dramfull = %d\n", gpu_stall_dramfull);
 	fprintf(statfout, "gpu_stall_icnt2sh    = %d\n", gpu_stall_icnt2sh );
@@ -1333,7 +1354,7 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 	/* Po-Han DCC: restrict number of parent blocks issued to a SM to reserve resources for child kernels. */
 	extern application_id g_app_name;	
 	unsigned parent_limit = 0;
-	if(g_dyn_child_thread_consolidation /*g_restrict_parent_block_count*/ && !k.is_child){
+	if(g_dyn_child_thread_consolidation && g_restrict_parent_block_count && !k.is_child){
 	   if(k.name().find(bfs_parent_k) != std::string::npos ||
 	     k.name().find(join_parent_k) != std::string::npos || 
 	     k.name().find(sssp_parent_k) != std::string::npos ||
@@ -1963,9 +1984,13 @@ void gpgpu_sim::cycle()
 			launch_one_device_kernel(true, NULL, NULL);
 		} 
 		else {
+		   
 			extern bool param_buffer_full; 
-			if(param_buffer_full && can_start_kernel())
+			if(param_buffer_full && can_start_kernel()){
 				launch_one_device_kernel(true, NULL, NULL);
+			} else {
+			   try_launch_child_kernel();
+			}
 /*			
 			unsigned n;
 			bool no_more_kernel = true;

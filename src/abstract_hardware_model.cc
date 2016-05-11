@@ -346,9 +346,9 @@ void warp_inst_t::generate_mem_accesses()
 	    if( !active(thread) ) 
 		continue;
 	    new_addr_type addr = m_per_scalar_thread[thread].memreqaddr[0];
-	    if(0/*space.get_type() == param_space_kernel*/){
-		    printf("Kernel parameter access at address 0x%llx\n", addr);
-	    }
+//	    if(space.get_type() == param_space_kernel){
+//		    printf("Kernel parameter access at address 0x%llx\n", addr);
+//	    }
 	    unsigned block_address = line_size_based_tag_func(addr,cache_block_size);
 	    accesses[block_address].set(thread);
 	    unsigned idx = addr-block_address; 
