@@ -66,7 +66,8 @@
 #include "../cuda-sim/ptx_ir.h"
 
 /* DCC restrict concurrent block count for parent kernel */
-static const unsigned per_kernel_parent_block_cnt[10] = {3, 0, 3/*2*/, 3, 0, 6, 6, 4, 0, 8};
+/* BFS, AMR, JOIN, SSSP, COLOR, MIS, PAGERANK, KMEANS, BFS_RODINIA, BC, SPMV, BL */
+static const unsigned per_kernel_parent_block_cnt[12] = {3, 0, 3/*2*/, 3, 3, 6, 6, 4, 0, 8, 6, 8};
 std::string bfs_parent_k("bfsCdpExpandKernel");
 std::string join_parent_k("joinCdpMainJoinKernel");
 std::string sssp_parent_k("ssspCdpExpandKernel");
@@ -77,6 +78,9 @@ std::string pr_parent_k2("spmv_csr_scalar_kernel");
 std::string kmeans_parent_k("kmeansPoint");
 std::string bc_parent_k1("bfs_kernel");
 std::string bc_parent_k2("backtrack_kernel");
+std::string color_parent_k("color1");
+std::string spmv_parent_k("spmv_csr_scalar_kernel");
+std::string bf_parent_k("test");
 unsigned g_max_param_buffer_size;
 unsigned g_param_buffer_thres_high, g_param_buffer_thres_low;
 
@@ -487,20 +491,6 @@ void gpgpu_sim_config::reg_options(option_parser_t opp)
 	option_parser_register(opp, "-restrict_parent_block_count", OPT_BOOL,
 	                &g_restrict_parent_block_count, "Restrict number of parent block to reserve resources for child kernels, Default: false",
 	                "0");
-
-	//Po-Han: hand-coded application id for DCC
-	extern application_id g_app_name;
-	option_parser_register(opp, "-application_name", OPT_INT32,
-			&g_app_name, "Test application id. Default: 0",
-			"0");
-
-	option_parser_register(opp, "-dcc_timeout_threshold", OPT_INT32,
-			&g_dcc_timeout_threshold, "DCC timeout threshold. Default: 200",
-			"200");
-	
-	option_parser_register(opp, "-dcc_version", OPT_INT32,
-			&g_dyn_child_thread_consolidation_version, "DCC version. Default: 2",
-			"2");
 
 	//Po-Han: hand-coded application id for DCC
 	extern application_id g_app_name;
@@ -1364,7 +1354,10 @@ bool shader_core_ctx::occupy_shader_resource_1block(kernel_info_t & k, bool occu
 	     k.name().find(bc_parent_k2) != std::string::npos ||
 	     k.name().find(kmeans_parent_k) != std::string::npos ||
              k.name().find(mis_parent_k1) != std::string::npos || 
-             k.name().find(mis_parent_k2) != std::string::npos) {
+             k.name().find(mis_parent_k2) != std::string::npos ||
+	     k.name().find(color_parent_k) != std::string::npos ||
+	     k.name().find(spmv_parent_k) != std::string::npos ||
+	     k.name().find(bf_parent_k) != std::string::npos){
 	      parent_limit = per_kernel_parent_block_cnt[g_app_name];
            }
            if( parent_limit != 0 && k.per_SM_block_cnt[m_tpc][m_config->sid_to_cid(m_sid)] >= parent_limit ){

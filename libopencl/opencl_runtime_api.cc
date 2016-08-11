@@ -646,7 +646,8 @@ class _cl_device_id *GPGPUSim_Init()
       gpgpu_sim *the_gpu = gpgpu_ptx_sim_init_perf(); 
       the_device = new _cl_device_id(the_gpu);
    } 
-   start_sim_thread(2);
+//   start_sim_thread(2);
+   start_sim_thread(1);
    return the_device;
 }
 
@@ -1189,7 +1190,8 @@ clGetDeviceInfo(cl_device_id    device,
    case CL_DEVICE_SINGLE_FP_CONFIG: CL_INT_CASE(0); break;
    case CL_DEVICE_MEM_BASE_ADDR_ALIGN: CL_INT_CASE(256*8); break;
    default:
-      opencl_not_implemented(__my_func__,__LINE__);
+	break;
+//      opencl_not_implemented(__my_func__,__LINE__);
    }
    return CL_SUCCESS;
 }
@@ -1302,7 +1304,7 @@ clGetKernelWorkGroupInfo(cl_kernel                  kernel,
       break;
    case CL_KERNEL_COMPILE_WORK_GROUP_SIZE:
    case CL_KERNEL_LOCAL_MEM_SIZE:
-      opencl_not_implemented(__my_func__,__LINE__);
+//      opencl_not_implemented(__my_func__,__LINE__);
       *(size_t *)param_value = device->the_device()->shared_mem_size();
       break;
    default:

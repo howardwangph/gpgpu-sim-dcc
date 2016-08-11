@@ -60,16 +60,16 @@ export QTINC=/usr/include
 # change NVOPENCL_LIBDIR to point to your opencl library directory, usually
 # /usr/lib or /usr/lib64. Not setting this variable will cause gpgpu-sim to
 # build without opencl support.
-if [ -f /usr/lib64/libOpenCL.so ]; then
+#if [ -f /usr/lib64/libOpenCL.so ]; then
 	export NVOPENCL_LIBDIR=/usr/lib64;
 
 	# change NVOPENCL_INCDIR to point to your opencl include directory.
-	if [ -f /usr/include/CL/cl.h ]; then
-		export NVOPENCL_INCDIR=/usr/include/;
-	elif [ -f $CUDA_INSTALL_PATH/include/CL/cl.h ]; then
-		export NVOPENCL_INCDIR=$CUDA_INSTALL_PATH/include/;
-	fi
-fi
+#	if [ -f /usr/include/CL/cl.h ]; then
+		export NVOPENCL_INCDIR=/home/r96/bddream/cuda-6.5/include/;
+#	elif [ -f $CUDA_INSTALL_PATH/include/CL/cl.h ]; then
+#		export NVOPENCL_INCDIR=$CUDA_INSTALL_PATH/include/;
+#	fi
+#fi
 
 # setting LD_LIBRARY_PATH as follows enables GPGPU-Sim to be invoked by 
 # native CUDA and OpenCL applications. GPGPU-Sim is dynamically linked

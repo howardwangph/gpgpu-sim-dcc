@@ -1819,7 +1819,10 @@ extern "C" {
 		CUctx_st *context = GPGPUSim_Context();
 		gpgpu_t *gpu = context->get_device()->get_gpgpu();
 		printf("GPGPU-Sim PTX: in __cudaRegisterTexture:\n");
-		gpu->gpgpu_ptx_sim_bindNameToTexture(deviceName, hostVar, dim, norm, ext);
+		char *tmp = deviceName;
+		while (*tmp == ':') tmp++;
+		gpu->gpgpu_ptx_sim_bindNameToTexture(tmp /*deviceName*/, hostVar, dim, norm, ext);
+		printf("GPGPU-Sim PTX:   name = %s\n", tmp /*deviceName*/);
 		printf("GPGPU-Sim PTX:   int dim = %d\n", dim);
 		printf("GPGPU-Sim PTX:   int norm = %d\n", norm);
 		printf("GPGPU-Sim PTX:   int ext = %d\n", ext);

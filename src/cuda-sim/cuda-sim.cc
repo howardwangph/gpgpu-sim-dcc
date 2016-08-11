@@ -1163,8 +1163,8 @@ void function_info::finalize( memory_space *param_mem )
 			const char *pdata = reinterpret_cast<const char*>(param_value.pdata) + idx; // cast to char * for ptr arithmetic
 			param_mem->write(param_address + idx, word_size, pdata,NULL,NULL); 
 		}
-		unsigned offset = p.get_offset();
-		assert(offset == param_address);
+//		unsigned offset = p.get_offset();
+//		assert(offset == param_address);
 		param->set_address(param_address);
 		param_address += size;
 	}

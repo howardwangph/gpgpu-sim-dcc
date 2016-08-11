@@ -93,7 +93,8 @@ OBJS = $(CXX_SRCS:%.cc=$(OUTPUT_DIR)/%.o)
 
 #--- Make rules ---
 
-all: lib$(PROG).a $(OUTPUT_DIR)/nvopencl_wrapper
+all: lib$(PROG).a 
+	#$(OUTPUT_DIR)/nvopencl_wrapper
 
 lib$(PROG).a: $(OBJS)
 	ar rcs $(OUTPUT_DIR)/lib$(PROG).a $(OBJS)

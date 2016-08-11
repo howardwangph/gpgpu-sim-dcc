@@ -667,8 +667,10 @@ void shader_core_ctx::fetch()
 
                                 /* not fetching parent threads if param buffer is full */
 				extern bool param_buffer_full; 
-                                extern std::list<int> target_parent_list;
+                                extern std::list<unsigned int> target_parent_list;
                                 bool buf_full_stall = (std::find(target_parent_list.begin(), target_parent_list.end(), m_thread[warp_id * 32]->m_kernel.get_uid()) != target_parent_list.end()) ? true : false;
+//				if (param_buffer_full && buf_full_stall)
+//				   printf("On-chip buffer is full, postpone threads from parent kernel\n");
                                 buf_full_stall &= param_buffer_full;
 
 				if( !buf_full_stall && ((!preempted && !switched) || (preempted && issuable)) ) {
@@ -887,7 +889,15 @@ void scheduler_unit::cycle()
 			//Jin: handle cdp latency;
 			if(pI->m_is_cdp && warp(warp_id).m_cdp_latency > 0) {
 				assert(warp(warp_id).m_cdp_dummy);
-				warp(warp_id).m_cdp_latency--;
+#if 0
+				if (warp(warp_id).m_cdp_latency > 1){
+				   warp(warp_id).m_cdp_latency--;
+				} else {
+#endif
+				   extern bool param_buffer_full;
+				   if(!param_buffer_full)
+				      warp(warp_id).m_cdp_latency--;
+//				}
 //				fprintf(stdout, "CDP: warp stall due to builtin function latency %d\n", warp(warp_id).m_cdp_latency);
 				break;
 			}

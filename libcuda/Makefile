@@ -77,12 +77,12 @@ CREATELIBRARY    =  1
 DEBUG ?= 0
 ifeq ($(DEBUG),1)
 	#CXXFLAGS +=  -pg -Wall -Wno-unused-function -Wno-sign-compare -g -fPIC $(GL)
-	CXXFLAGS +=  -Wall -Wno-unused-function -Wno-sign-compare -g -fPIC $(GL)
+	CXXFLAGS +=  -Wall -Wno-unused-function -Wno-sign-compare -g -fPIC $(GL) -fpermissive
 	#CCFLAGS += -pg -Wall -Wno-unused-function -Wno-sign-compare -ggdb -fPIC
-	CCFLAGS += -Wall -Wno-unused-function -Wno-sign-compare -ggdb -fPIC
+	CCFLAGS += -Wall -Wno-unused-function -Wno-sign-compare -ggdb -fPIC -fpermissive
 else
-	CXXFLAGS += -O3 -g -Wall -Wno-unused-function -Wno-sign-compare -fPIC $(GL)
-	CCFLAGS += -Wall -Wno-unused-function -Wno-sign-compare -fPIC
+	CXXFLAGS += -O3 -g -Wall -Wno-unused-function -Wno-sign-compare -fPIC $(GL) -fpermissive
+	CCFLAGS += -Wall -Wno-unused-function -Wno-sign-compare -fPIC -fpermissive
 endif
 
 PROG     =cuda

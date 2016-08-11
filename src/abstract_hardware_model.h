@@ -723,6 +723,8 @@ class gpgpu_t {
 		const struct textureReference* get_texref(const std::string &texname) const
 		{
 			std::map<std::string, const struct textureReference*>::const_iterator t=m_NameToTextureRef.find(texname);
+			if(t == m_NameToTextureRef.end())
+				printf("%s\n", texname.c_str());
 			assert( t != m_NameToTextureRef.end() );
 			return t->second;
 		}

@@ -64,7 +64,9 @@ typedef enum _application_id {
     PAGERANK,
     KMEANS,
     BFS_RODINIA,
-    BC
+    BC,
+    SPMV,
+    BL
 } application_id;
 //extern application_id g_app_name;
 //extern std::list<dcc_kernel_distributor_t *> g_cuda_dcc_kernel_distributor;
