@@ -97,6 +97,7 @@ public:
 
    bool full() const;
    void print( FILE* simFile ) const;
+   void print_dkc( FILE* simFile ) const;
    void visualize() const;
    void print_stat( FILE* simFile );
    unsigned que_length() const; 

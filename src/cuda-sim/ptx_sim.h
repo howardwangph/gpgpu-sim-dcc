@@ -284,7 +284,7 @@ class ptx_thread_info {
 		void set_reg( const symbol *reg, const ptx_reg_t &value );
 		ptx_reg_t get_reg( const symbol *reg );
 		ptx_reg_t get_operand_value( const operand_info &op, operand_info dstInfo, unsigned opType, ptx_thread_info *thread, int derefFlag );
-		void set_operand_value( const operand_info &dst, const ptx_reg_t &data, unsigned type, ptx_thread_info *thread, const ptx_instruction *pI );
+		void set_operand_value( const operand_info &dst, const ptx_reg_t &data, unsigned type, ptx_thread_info *thread, const ptx_instruction *pI, int shfl_pval = 0 );
 		void set_operand_value( const operand_info &dst, const ptx_reg_t &data, unsigned type, ptx_thread_info *thread, const ptx_instruction *pI, int overflow, int carry );
 		void get_vector_operand_values( const operand_info &op, ptx_reg_t* ptx_regs, unsigned num_elements );
 		void set_vector_operand_values( const operand_info &dst, 
@@ -354,6 +354,7 @@ class ptx_thread_info {
    		void set_block_idx( unsigned block_idx ) { m_block_idx = block_idx; }
    		void set_thread_idx( unsigned thread_idx ) { m_thread_idx = thread_idx; }
    		// ---
+		void set_lane_idx( unsigned lane_idx ) {m_laneid = lane_idx;}
 
 		unsigned get_builtin( int builtin_id, unsigned dim_mod ); 
 
@@ -439,7 +440,8 @@ class ptx_thread_info {
 		void popc_reduction(unsigned ctaid, unsigned barid, bool value) {m_core->popc_reduction(ctaid,barid,value);}
 
 		// Po-Han DCC
-		void set_param_mem(unsigned global_tid);
+		unsigned long long set_param_mem(unsigned global_tid);
+		//void set_param_mem(unsigned global_tid);
 		addr_t m_param_memory_base;
 		//Jin: get corresponding kernel grid for CDP purpose
 		kernel_info_t & get_kernel() { return m_kernel; }
@@ -462,6 +464,7 @@ class ptx_thread_info {
 		unsigned m_hw_wid;
 		unsigned m_hw_ctaid;
 		core_t *m_core;
+		unsigned m_laneid;
 
 	private:
 
@@ -524,7 +527,7 @@ addr_t global_to_generic( addr_t addr );
 bool isspace_local( unsigned smid, unsigned hwtid, addr_t addr );
 bool isspace_shared( unsigned smid, addr_t addr );
 bool isspace_global( addr_t addr );
-bool isspace_dcc_param( addr_t addr );
+bool isspace_child_param( addr_t addr );
 memory_space_t whichspace( addr_t addr );
 
 extern unsigned g_ptx_thread_info_uid_next;

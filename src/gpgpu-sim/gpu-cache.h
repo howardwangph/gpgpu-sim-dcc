@@ -384,6 +384,7 @@ protected:
     unsigned m_prev_snapshot_miss;
     unsigned m_prev_snapshot_pending_hit;
 
+public:
     int m_core_id; // which shader core is using this
     int m_type_id; // what kind of cache is this (normal, texture, constant)
 };

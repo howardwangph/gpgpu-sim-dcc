@@ -41,6 +41,8 @@
 #include <string.h>
 #include <zlib.h>
 
+unsigned int total_active_warp = 0;
+
 static void time_vector_print_interval2gzfile(gzFile outfile);
 
 void gpgpu_sim::visualizer_printstat()
@@ -73,6 +75,10 @@ void gpgpu_sim::visualizer_printstat()
    gzprintf(visualizer_file, "globalcyclecount: %lld\n", gpu_sim_cycle);
    gzprintf(visualizer_file, "globalinsncount: %lld\n", gpu_sim_insn);
    gzprintf(visualizer_file, "globaltotinsncount: %lld\n", gpu_tot_sim_insn);
+
+   float SMUtil = (float)total_active_warp / (64 * 13);
+   total_active_warp = 0;
+   gzprintf(visualizer_file, "sm_utilization: %0.4f\n", SMUtil);
 
    time_vector_print_interval2gzfile(visualizer_file);
 

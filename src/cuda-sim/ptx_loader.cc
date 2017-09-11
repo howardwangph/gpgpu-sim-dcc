@@ -236,10 +236,12 @@ void gpgpu_ptxinfo_load_from_string( const char *p_for_info, unsigned source_num
     ptxinfo_parse();
     snprintf(commandline,1024,"rm -f %s %s %s", fname, fname2, tempfile_ptxinfo);
     printf("GPGPU-Sim PTX: removing ptxinfo using \"%s\"\n", commandline);
+    /* bddream: temporarily keep ptx info
     result = system(commandline);
     if( result != 0 ) {
        printf("GPGPU-Sim PTX: ERROR ** while loading PTX (c) %d\n", result);
        exit(1);
     }
+    */
 }
 

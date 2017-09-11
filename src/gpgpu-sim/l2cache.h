@@ -72,6 +72,7 @@ public:
    void print_stat( FILE *fp ) { m_dram->print_stat(fp); }
    void visualize() const { m_dram->visualize(); }
    void print( FILE *fp ) const;
+   void print_dkc( FILE *fp ) const;
 
    class memory_sub_partition * get_sub_partition(int sub_partition_id) 
    {

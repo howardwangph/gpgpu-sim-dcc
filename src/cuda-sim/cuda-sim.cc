@@ -97,8 +97,8 @@ void ptx_opcocde_latency_options (option_parser_t opp) {
 			"CDP API latency <cudaStreamCreateWithFlags, \
 			cudaGetParameterBufferV2_init_perWarp, cudaGetParameterBufferV2_perKernel, \
 			cudaLaunchDeviceV2_init_perWarp, cudaLaunchDevicV2_perKernel, cudaDeviceSynchronize>"
-			"Default 7200,8000,100,12000,1600,0",
-			"7200,8000,100,12000,1600,0");
+			"Default 7200,8000,100,12000,1600,10",
+			"7200,8000,100,12000,1600,10");
 }
 
 static address_type get_converge_point(address_type pc);
@@ -314,20 +314,20 @@ bool isspace_shared( unsigned smid, addr_t addr )
 //Po-Han: dynamic child-thread consolidation
 bool isspace_global( addr_t addr )
 {
-	return (addr >= GLOBAL_HEAP_START && addr < DCC_PARAM_START) || (addr < STATIC_ALLOC_LIMIT);
+	return (addr >= GLOBAL_HEAP_START && addr < CHILD_PARAM_START) || (addr < STATIC_ALLOC_LIMIT);
 }
 
-bool isspace_dcc_param (addr_t addr)
+bool isspace_child_param (addr_t addr)
 {
-	return (addr >= DCC_PARAM_START);
+	return (addr >= CHILD_PARAM_START);
 }
 
 //Po-Han: dynamic child-thread consolidation
 memory_space_t whichspace( addr_t addr )
 {
-	if( addr >= DCC_PARAM_START ){
-		return dcc_param_space;
-	} else if( (addr >= GLOBAL_HEAP_START && addr < DCC_PARAM_START) || (addr < STATIC_ALLOC_LIMIT) ) {
+	if( addr >= CHILD_PARAM_START ){
+		return child_param_space;
+	} else if( (addr >= GLOBAL_HEAP_START && addr < CHILD_PARAM_START) || (addr < STATIC_ALLOC_LIMIT) ) {
 		return global_space;
 	} else if( addr >= SHARED_GENERIC_START ) {
 		return shared_space;
@@ -369,16 +369,17 @@ addr_t generic_to_global( addr_t addr )
 }
 
 //Po-Han: dynamic child kernel consolidation
-void* gpgpu_t::dcc_param_malloc( size_t size )
+void* gpgpu_t::child_param_malloc( size_t size )
 {
-	unsigned long long result = m_dcc_param_malloc;
+	extern int g_child_parameter_buffer_alignment;
+	unsigned long long result = m_child_param_malloc;
 	if(g_debug_execution >= 3) {
-		printf("GPGPU-Sim PTX: allocating %zu bytes for child kernel parameter on GPU starting at address 0x%Lx\n", size, m_dcc_param_malloc );
+		printf("GPGPU-Sim PTX: allocating %zu bytes for child kernel parameter on GPU starting at address 0x%Lx\n", size, m_child_param_malloc );
 		fflush(stdout);
 	}
-	m_dcc_param_malloc += size;
-	if (size%256) m_dcc_param_malloc += (256 - size%256); //align to 256 byte boundaries
-	if(m_dcc_param_malloc == DCC_PARAM_END) m_dcc_param_malloc = DCC_PARAM_START;
+	m_child_param_malloc += size;
+	if (size%g_child_parameter_buffer_alignment) m_child_param_malloc += (g_child_parameter_buffer_alignment - size%g_child_parameter_buffer_alignment); //align to g_child_parameter_buffer_alignment byte boundaries
+	if(m_child_param_malloc == CHILD_PARAM_END) m_child_param_malloc = CHILD_PARAM_START;
 	return(void*) result;
 }
 
@@ -391,7 +392,7 @@ void* gpgpu_t::gpu_malloc( size_t size )
 	}
 	m_dev_malloc += size;
 	if (size%256) m_dev_malloc += (256 - size%256); //align to 256 byte boundaries
-	if(m_dev_malloc == DCC_PARAM_END) m_dev_malloc = DCC_PARAM_START;
+	if(m_dev_malloc == CHILD_PARAM_END) m_dev_malloc = CHILD_PARAM_START;
 	return(void*) result;
 }
 
@@ -644,11 +645,6 @@ void ptx_instruction::set_opcode_and_latency()
 	sscanf(cdp_latency_str, "%u,%u,%u,%u,%u,%u",
 			&cdp_latency[0],&cdp_latency[1],&cdp_latency[2], 
 			&cdp_latency[3],&cdp_latency[4],&cdp_latency[5]);
-
-	//Po-Han DCC: change the cdp latency if dynamic child-thread consolidation is enabled
-/*	if(g_dyn_child_thread_consolidation){
-		cdp_latency[1]=cdp_latency[2]=cdp_latency[3]=cdp_latency[4]=0;
-	}*/
 
 	if(!m_operands.empty()){
 		std::vector<operand_info>::iterator it;
@@ -1121,7 +1117,9 @@ unsigned function_info::get_args_aligned_size() {
 		symbol *param = m_symtab->lookup(name.c_str());
 
 		size_t arg_size = p.get_size() / 8; // size of param in bytes
-		total_size = (total_size + arg_size - 1) / arg_size * arg_size; //aligned
+		size_t align_size = arg_size;
+		if(align_size > 8) align_size = 8; // parameters are only aligned in BYTE granularity
+		total_size = (total_size + align_size/*arg_size*/ - 1) / align_size * align_size; //arg_size * arg_size; //aligned
 		p.add_offset(total_size);
 		param->set_address(param_address + total_size);
 		total_size += arg_size;
@@ -1306,7 +1304,7 @@ void ptx_thread_info::ptx_exec_inst( warp_inst_t &inst, unsigned lane_id)
 		} else {
 			const ptx_instruction *pI_saved = pI;
 			ptx_instruction *pJ = NULL;
-			if( pI->get_opcode() == VOTE_OP ) {
+			if( pI->get_opcode() == VOTE_OP || pI->get_opcode() == SHFL_OP ) {
 				pJ = new ptx_instruction(*pI);
 				*((warp_inst_t*)pJ) = inst; // copy active mask information
 				pI = pJ;
@@ -1372,8 +1370,36 @@ void ptx_thread_info::ptx_exec_inst( warp_inst_t &inst, unsigned lane_id)
 			insn_memory_op = pI->has_memory_read() ? memory_load : memory_store;
 			//fprintf(stdout, "after memoryop\n");
 
+			//bddream - DKPL
 			if(insn_space.get_type() == param_space_kernel){
+//			    extern bool g_child_param_buffer_compaction;
+			    extern int g_global_constant_pointer_sharing;
+			    if(isspace_child_param(m_param_memory_base) && g_global_constant_pointer_sharing){
+				if (g_global_constant_pointer_sharing == 2){ //param accesses instantly completed
+				    insn_memaddr = 0xFEEBDAED;
+				} else if (g_global_constant_pointer_sharing == 1){
+				    extern application_id g_app_name;
+				    extern int global_constant_offset[12];
+				    if( insn_memaddr >= global_constant_offset[g_app_name] ) {
+					insn_memaddr = 0xFEEBDAED;
+				    } else {
+					insn_memaddr += m_param_memory_base;
+				    }
+				}
+#if 0
+				int i;
+				for( i = 0; i < 6; i++ ){
+				    if( global_constant_offset[g_app_name][i] != -1 && global_constant_offset[g_app_name][i] == insn_memaddr ){
+//			printf("CPB: addr %llx offset %d app_name %d gc_num %d\n", addr, offset, g_app_name, i);
+					insn_memaddr = 0xFEEBDAED;
+					break;
+				    }
+				}
+				if (i == 6) insn_memaddr += m_param_memory_base;
+#endif
+			    } else {
 				insn_memaddr += m_param_memory_base;
+			    }
 			}
 		}
 
@@ -1574,6 +1600,8 @@ unsigned ptx_sim_init_thread( kernel_info_t &kernel,
 		cta_info->check_cta_thread_status_and_reset();
 	}
 
+	unsigned long long extra_dispatching_latency = 0;
+
 	std::map<unsigned,memory_space*> &local_mem_lookup = local_memory_lookup[sid];
 	while( kernel.more_threads_in_cta() ) {
 		int agg_group_id = kernel.get_next_agg_group_id();
@@ -1597,6 +1625,7 @@ unsigned ptx_sim_init_thread( kernel_info_t &kernel,
 			local_mem_lookup[new_tid] = local_mem;
 		}
 		
+		thd->set_lane_idx(new_tid % ((shader_core_ctx *)core)->get_config()->warp_size);
 		// dekline
 		// set block idx in this thread
 		unsigned idx = kernel.find_block_idx(ctaid3d);
@@ -1607,7 +1636,7 @@ unsigned ptx_sim_init_thread( kernel_info_t &kernel,
 		thd->set_nctaid(kernel.get_grid_dim(agg_group_id));
 		thd->set_ntid(kernel.get_cta_dim());
 		thd->set_agg_group_id(agg_group_id);
-		thd->set_param_mem(global_tid);
+		extra_dispatching_latency += thd->set_param_mem(global_tid);
 		thd->set_ctaid(ctaid3d);
 		thd->set_tid(tid3d);
 		if( kernel.entry()->get_ptx_version().extensions() ) 
@@ -1630,6 +1659,65 @@ unsigned ptx_sim_init_thread( kernel_info_t &kernel,
 	if ( g_debug_execution==-1 ) {
 		printf("GPGPU-Sim PTX simulator:  <-- FINISHING THREAD ALLOCATION\n");
 		fflush(stdout);
+	}
+
+	int agg_group_id = kernel.get_next_agg_group_id();
+	unsigned block_id = kernel.get_next_block_id();
+	int kernel_queue_entry;
+	if( agg_group_id >= 0 ){
+	    dim3 agg_grid_dim = kernel.get_grid_dim(agg_group_id);
+	    kernel_queue_entry = kernel.get_kernel_queue_entry(agg_group_id);
+	    if( block_id == 0 ){// agg_block_group and 1st block, check for extra meta data load latency
+		printf("DTBL: cycle %llu start disptaching agg group %d queue entry %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, agg_group_id, kernel_queue_entry);
+		if( kernel_queue_entry == -1 ) //next agg group info is stored in global memory
+		    kernel.extra_metadata_load_latency = true;
+	    }
+#if 0
+	    if( block_id + 1 == agg_grid_dim.x * agg_grid_dim.y * agg_grid_dim.z ){ //last block of an agg group, reclaim space for meta data
+		extern unsigned int g_kernel_queue_entry_used; 
+		if( kernel_queue_entry == -1 ){ //next agg group info is stored in global memory
+		    //				extern bool extra_metadata_load_latency;
+		    extern unsigned long long total_num_offchip_metadata;
+		    if(total_num_offchip_metadata > 0) total_num_offchip_metadata--;
+		} else {
+		    extern bool *g_kernel_queue_entry_empty;
+		    assert(g_kernel_queue_entry_empty[kernel_queue_entry] == false);
+		    g_kernel_queue_entry_empty[kernel_queue_entry] = true;
+		    g_kernel_queue_entry_used--;
+		    //		printf("DTBL: cycle %llu reclaim kernel queue entry %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, kernel_queue_entry);
+		}
+		printf("DTBL: cycle %llu disptach last block of agg group %d, reclaim queue entry %d, kernel queue used %u\n", gpu_sim_cycle+gpu_tot_sim_cycle, agg_group_id, kernel_queue_entry, g_kernel_queue_entry_used);
+	    }
+#endif
+	}
+
+	if(extra_dispatching_latency > 1){
+	    extern unsigned long long global_next_dispatchable_cycle;
+	    unsigned long long accumulated_dispatching_latency = 0;
+	    if( extra_dispatching_latency >= 140 && global_next_dispatchable_cycle > gpu_sim_cycle + gpu_tot_sim_cycle )
+		accumulated_dispatching_latency = global_next_dispatchable_cycle - gpu_sim_cycle - gpu_tot_sim_cycle;
+	    core->next_dispatchable_cycle = gpu_sim_cycle + gpu_tot_sim_cycle + extra_dispatching_latency + accumulated_dispatching_latency;
+	    global_next_dispatchable_cycle = kernel.next_dispatchable_cycle = core->next_dispatchable_cycle;
+	    printf("DKC: cycle %llu, %llu extra latency during dispating, kernel %d and core %d cannot dispatch until %llu\n",
+		    gpu_sim_cycle + gpu_tot_sim_cycle,
+		    extra_dispatching_latency,
+		    kernel.get_uid(),
+		    ((shader_core_ctx *)core)->get_sid(),
+		    kernel.next_dispatchable_cycle);
+	}
+
+	/* model extra latency due to on-chip kernel queue */
+	extern bool g_estimate_offchip_metadata_load_latency;
+	if(g_estimate_offchip_metadata_load_latency && kernel.extra_metadata_load_latency){
+	    extern unsigned int AVG_PARAM_RD_TIME;
+	    extern unsigned int block_scheduling_delay;
+//	    extern unsigned int num_offchip_metadata;
+	    extern unsigned long long total_extra_metadata_latency;
+	    block_scheduling_delay += AVG_PARAM_RD_TIME /*(unsigned int)avg_offchip_latency*/;
+//	    num_offchip_metadata++;
+	    total_extra_metadata_latency += AVG_PARAM_RD_TIME /*(unsigned long long)avg_offchip_latency*/;
+	    kernel.extra_metadata_load_latency = false;
+	    printf("DTBL: cycle %llu dispatch off-chip agg group, add %d cycles delay\n", gpu_sim_cycle+gpu_tot_sim_cycle, AVG_PARAM_RD_TIME/*(unsigned int) avg_offchip_latency*/);
 	}
 
 	kernel.increment_cta_id();

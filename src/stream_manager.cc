@@ -45,14 +45,14 @@ CUstream_st::CUstream_st()
 //    pthread_mutex_init(&m_lock,NULL);
 }
 
-/*
+
 bool CUstream_st::empty()
 {
     pthread_mutex_lock(&m_lock);
     bool empty = m_operations.empty();
     pthread_mutex_unlock(&m_lock);
     return empty;
-}*/
+}
 
 bool CUstream_st::busy()
 {
@@ -228,13 +228,13 @@ stream_manager::stream_manager( gpgpu_sim *gpu, bool cuda_launch_blocking )
     m_gpu = gpu;
     m_service_stream_zero = false;
     m_cuda_launch_blocking = cuda_launch_blocking;
-    pthread_mutex_init(&m_lock,NULL);
+    pthread_mutex_init(&stm_m_lock,NULL);
 }
 
 bool stream_manager::operation( bool * sim)
 {
     bool check=check_finished_kernel();
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
 //    if(check)m_gpu->print_stats();
     stream_operation op =front();
     if(!op.do_operation( m_gpu )) //not ready to execute
@@ -247,7 +247,7 @@ bool stream_manager::operation( bool * sim)
         op.get_stream()->cancel_front();
 
     }
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
     //pthread_mutex_lock(&m_lock);
     // simulate a clock cycle on the GPU
     return check;
@@ -260,7 +260,7 @@ bool stream_manager::check_finished_kernel()
     return check;
 }
 
-bool stream_manager::gpu_can_start_kernel(){
+unsigned stream_manager::gpu_can_start_kernel(){
 	return m_gpu->can_start_kernel();
 }
 
@@ -277,12 +277,25 @@ bool stream_manager::register_finished_kernel(unsigned grid_uid)
             std::ofstream kernel_stat("kernel_stat.txt", std::ofstream::out | std::ofstream::app);
             kernel_stat<< " kernel " << grid_uid << ": " << kernel->name();
 //printf("XD4\n");
-            if(kernel->get_parent())
+            if(kernel->get_parent()){
                 kernel_stat << ", parent " << kernel->get_parent()->get_uid() <<
                 ", launch " << kernel->launch_cycle;
             kernel_stat<< ", start " << kernel->start_cycle <<
                 ", end " << kernel->end_cycle << ", retire " << gpu_sim_cycle + gpu_tot_sim_cycle << "\n";
+	    } else {
+		    extern unsigned long long max_concurrent_device_kernel, concurrent_device_kernel;
+		    if(max_concurrent_device_kernel < concurrent_device_kernel) max_concurrent_device_kernel = concurrent_device_kernel;
+		    concurrent_device_kernel = 0;
+	    }
 //printf("XD5\n");
+
+	    //turn off the flag after parent kernel finished
+	    extern bool child_running;
+	    if(is_target_parent_kernel(kernel)){
+		printf("Cycle %llu: child kernels finished.\n", gpu_sim_cycle+gpu_tot_sim_cycle);
+		child_running = false;
+	    }
+
             printf("kernel %d finishes, retires from stream %d\n", grid_uid, stream->get_uid());
             kernel_stat.flush();
             kernel_stat.close();
@@ -339,15 +352,15 @@ stream_operation stream_manager::front()
 void stream_manager::add_stream( struct CUstream_st *stream )
 {
     // called by host thread
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
     m_streams.push_back(stream);
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
 }
 
 void stream_manager::destroy_stream( CUstream_st *stream )
 {
     // called by host thread
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
     while( !stream->empty() )
         ; 
     std::list<CUstream_st *>::iterator s;
@@ -360,7 +373,7 @@ void stream_manager::destroy_stream( CUstream_st *stream )
     }
 //        }
     delete stream; 
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
 }
 
 bool stream_manager::has_stream( CUstream_st *stream ){
@@ -375,23 +388,24 @@ bool stream_manager::concurrent_streams_empty()
     bool result = true;
     // called by gpu simulation thread
     std::list<struct CUstream_st *>::iterator s, s_end;
-    s_end = m_streams.end();
-//        if(m_streams.size() != 0){
-    for( s=m_streams.begin(); s!=s_end/*m_streams.end()*/;++s ) {
-        struct CUstream_st *stream = *s;
-        if( !stream->empty() ) {
-//            stream->print(stdout);
-            result = false;
-        }
+    if (!m_streams.empty()){
+	unsigned idx = 0;
+	s_end = m_streams.end();
+	for( s=m_streams.begin(); s!=s_end/*m_streams.end()*/;s++, idx++ ) {
+	    struct CUstream_st *stream = *s;
+	    if( !stream->empty() ) {
+		//            stream->print(stdout);
+		result = false;
+	    }
+	}
     }
-//        }
     return result;
 }
 
 bool stream_manager::empty_protected()
 {
     bool result = true;
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
     if( !concurrent_streams_empty() )
         result = false;
     if( !m_stream_zero.empty() )
@@ -402,7 +416,7 @@ bool stream_manager::empty_protected()
 	result = false;
 	printf("DCC: there are %d child kernels in the kernel distrobutor, prevent GPGPUsim from halting\n", g_cuda_dcc_kernel_distributor.size());
     }*/
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
     return result;
 }
 
@@ -422,9 +436,9 @@ bool stream_manager::empty()
 
 void stream_manager::print( FILE *fp)
 {
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
     print_impl(fp);
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
 }
 void stream_manager::print_impl( FILE *fp)
 {
@@ -448,12 +462,12 @@ void stream_manager::push( stream_operation op )
     // block if stream 0 (or concurrency disabled) and pending concurrent operations exist
     bool block= !stream || m_cuda_launch_blocking;
     while(block) {
-        pthread_mutex_lock(&m_lock);
+        pthread_mutex_lock(&stm_m_lock);
         block = !concurrent_streams_empty();
-        pthread_mutex_unlock(&m_lock);
+        pthread_mutex_unlock(&stm_m_lock);
     };
 
-    pthread_mutex_lock(&m_lock);
+    pthread_mutex_lock(&stm_m_lock);
     if( stream && !m_cuda_launch_blocking ) {
         stream->push(op);
     } else {
@@ -462,11 +476,11 @@ void stream_manager::push( stream_operation op )
     }
     if(g_debug_execution >= 3)
        print_impl(stdout);
-    pthread_mutex_unlock(&m_lock);
+    pthread_mutex_unlock(&stm_m_lock);
     if( m_cuda_launch_blocking || stream == NULL ) {
         unsigned int wait_amount = 100; 
         unsigned int wait_cap = 100000; // 100ms 
-        while( !empty() ) {
+        while( !empty_protected() ) {
             // sleep to prevent CPU hog by empty spin
             // sleep time increased exponentially ensure fast response when needed 
             usleep(wait_amount); 
@@ -478,16 +492,24 @@ void stream_manager::push( stream_operation op )
 }
 
 //Jin: aggregated blocks support
-kernel_info_t * stream_manager::find_grid(function_info * entry)
+kernel_info_t * stream_manager::find_grid(function_info * entry, kernel_info_t * parent_grid = NULL, unsigned parent_block_idx = 0)
 {
     kernel_info_t * grid = NULL;
-    grid = m_stream_zero.find_grid(entry);
+    if(parent_grid == NULL){
+	grid = m_stream_zero.find_grid(entry, NULL, 0);
+    }else{
+	grid = m_stream_zero.find_grid(entry, parent_grid, parent_block_idx);
+    }
     if(grid != NULL)
-        return grid;
+	return grid;
 
-//        if(m_streams.size() != 0){
+    //        if(m_streams.size() != 0){
     for(auto s=m_streams.begin(); s!=m_streams.end();++s ) {
-        grid = (*s)->find_grid(entry);
+	if(parent_grid == NULL){
+	    grid = (*s)->find_grid(entry, NULL, 0);
+	}else{
+	    grid = (*s)->find_grid(entry, parent_grid, parent_block_idx);
+	}
         if(grid != NULL)
             return grid;
     }
@@ -496,8 +518,8 @@ kernel_info_t * stream_manager::find_grid(function_info * entry)
     return NULL;
 }
 
-kernel_info_t * CUstream_st::find_grid(function_info * entry) {
-    
+kernel_info_t * CUstream_st::find_grid(function_info * entry, kernel_info_t *parent_grid = NULL, unsigned parent_block_idx = 0) 
+{
     kernel_info_t * grid = NULL;
 
     pthread_mutex_lock(&m_lock);
@@ -505,10 +527,17 @@ kernel_info_t * CUstream_st::find_grid(function_info * entry) {
     for( auto op=m_operations.begin(); op!=m_operations.end(); op++ ) {
         if(op->is_kernel()) {
             kernel_info_t * kernel = op->get_kernel();
-            if(entry == kernel->entry()) {
-                grid = kernel;
-                break;
-            }
+	    if(parent_grid == NULL){
+		if(entry == kernel->entry() && !kernel->is_finished() ) {
+		    grid = kernel;
+		    break;
+		}
+	    } else {
+		if( !kernel->is_finished() && kernel->get_parent() == parent_grid && kernel->get_parent_block_idx() == parent_block_idx ){
+		    grid = kernel;
+		    break;
+		}
+	    }
         }
     }
 

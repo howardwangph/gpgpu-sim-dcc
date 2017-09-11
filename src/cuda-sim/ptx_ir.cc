@@ -1078,6 +1078,9 @@ ptx_instruction::ptx_instruction( int opcode,
    m_atomic_spec = 0;
    m_membar_level = 0;
    m_inst_size = 8; // bytes
+   m_shf_direction = 0;
+   m_shf_mode = 0;
+   m_shfl_mode = 0;
 
    std::list<int>::const_iterator i;
    unsigned n=1;
@@ -1207,6 +1210,20 @@ ptx_instruction::ptx_instruction( int opcode,
       case HALF_OPTION:
          m_inst_size = 4; // bytes
          break;
+	  case SHFL_OPTION: // New options added from here
+	  case SHFR_OPTION:
+		 m_shf_direction = last_ptx_inst_option;
+		 break;
+	  case CLAMP_OPTION:
+	  case WRAP_OPTION:
+		 m_shf_mode = last_ptx_inst_option;
+		 break;
+	  case UP_OPTION:
+	  case DOWN_OPTION:
+	  case BFLY_OPTION:
+	  case IDX_OPTION:
+		 m_shfl_mode = last_ptx_inst_option;
+		 break;
       default:
          assert(0);
          break;

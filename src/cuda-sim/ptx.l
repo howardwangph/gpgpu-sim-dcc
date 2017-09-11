@@ -145,6 +145,7 @@ xor     TC; ptx_lval.int_value = XOR_OP; return OPCODE;
 nop     TC; ptx_lval.int_value = NOP_OP; return OPCODE;
 break  TC; ptx_lval.int_value = BREAK_OP; return OPCODE;
 breakaddr  TC; ptx_lval.int_value = BREAKADDR_OP; return OPCODE;
+shfl    TC; ptx_lval.int_value = SHFL_OP; return OPCODE;
 
 <INITIAL,NOT_OPCODE,IN_INST,IN_FUNC_DECL>{
 
@@ -321,11 +322,16 @@ breakaddr  TC; ptx_lval.int_value = BREAKADDR_OP; return OPCODE;
 \.cs    TC; return CS_OPTION;
 \.lu    TC; return LU_OPTION;
 \.cv    TC; return CV_OPTION;
+\.nc	TC; return NC_OPTION;
 
 \.wb	TC; return WB_OPTION;
 \.wt	TC; return WT_OPTION;
 
 \.popc	TC; return ATOMIC_POPC;
+\.l     TC; return SHFL_OPTION;
+\.r     TC; return SHFR_OPTION;
+\.clamp TC; return CLAMP_OPTION;
+\.wrap  TC; return WRAP_OPTION;
 \.and	TC; return ATOMIC_AND;
 \.or	TC; return ATOMIC_OR;
 \.xor	TC; return ATOMIC_XOR;
@@ -336,6 +342,10 @@ breakaddr  TC; ptx_lval.int_value = BREAKADDR_OP; return OPCODE;
 \.dec	TC; return ATOMIC_DEC;
 \.min	TC; return ATOMIC_MIN;
 \.max	TC; return ATOMIC_MAX;
+\.up    TC; return UP_OPTION;
+\.down  TC; return DOWN_OPTION;
+\.bfly  TC; return BFLY_OPTION;
+\.idx   TC; return IDX_OPTION;
 
 \.1d	TC; return GEOM_MODIFIER_1D;
 \.2d	TC; return GEOM_MODIFIER_2D;

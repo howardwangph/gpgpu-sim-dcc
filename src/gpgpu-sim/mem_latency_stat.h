@@ -43,7 +43,8 @@ public:
    void memlatstat_dram_access( class mem_fetch *mf );
    void memlatstat_icnt2mem_pop( class mem_fetch *mf);
    void memlatstat_lat_pw();
-   void memlatstat_print(unsigned n_mem, unsigned gpu_mem_n_bk);
+   void memlatstat_print(FILE *statfout, unsigned n_mem, unsigned gpu_mem_n_bk);
+   void memlatstat_print_dkc(FILE *statfout, unsigned n_mem, unsigned gpu_mem_n_bk);
 
    void visualizer_print( gzFile visualizer_file );
 

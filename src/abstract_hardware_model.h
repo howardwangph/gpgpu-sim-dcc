@@ -50,7 +50,7 @@ enum _memory_space_t {
 	global_space,
 	generic_space,
 	instruction_space,
-	dcc_param_space	/* Po-Han: special space for child-kernel parameters */
+	child_param_space	/* Po-Han: special space for child-kernel parameters */
 };
 
 
@@ -293,19 +293,48 @@ class kernel_info_t {
 		//Po-Han: DCC implementation
 		void set_grid_dim(dim3 gridDim) { m_grid_dim = gridDim; }
 
-		void increment_cta_id() 
+		void increment_cta_id();
+#if 0
 		{ 
-			dim3 next_grid_dim = get_grid_dim(m_next_agg_group_id);
-			if(increment_x_then_y_then_z(m_next_cta, next_grid_dim)) { //overbound
-				m_next_agg_group_id++;
-				m_next_cta.x = 0;
-				m_next_cta.y = 0;
-				m_next_cta.z = 0;
+		    dim3 next_grid_dim = get_grid_dim(m_next_agg_group_id);
+		    if(increment_x_then_y_then_z(m_next_cta, next_grid_dim)) { //overbound
+			m_next_agg_group_id++;
+			m_next_cta.x = 0;
+			m_next_cta.y = 0;
+			m_next_cta.z = 0;
+
+			extern bool g_dcc_kernel_param_onchip;
+			if( g_dcc_kernel_param_onchip && is_child ){
+			    extern signed kernel_param_usage;
+			    extern signed long long param_buffer_usage;
+			    extern unsigned g_max_param_buffer_size;
+			    extern unsigned g_param_buffer_thres_low;
+			    extern bool param_buffer_full; 
+			    param_buffer_usage -= kernel_param_usage;
+			    if(param_buffer_usage < 0) param_buffer_usage = 0;
+			    fprintf(stdout, "KPM: Clear an entry, param_buffer usage %lld", param_buffer_usage);
+			    if(param_buffer_usage * 100 < g_max_param_buffer_size * g_param_buffer_thres_low){
+				param_buffer_full = false;
+				fprintf(stdout, ", <%u\%, turn-off full bit", g_param_buffer_thres_low);
+			    }
+			    fprintf(stdout, "\n");
 			}
-			m_next_tid.x=0;
-			m_next_tid.y=0;
-			m_next_tid.z=0;
+			extern bool g_estimate_offchip_metadata_load_latency;
+			if( g_estimate_offchip_metadata_load_latency ){
+			    if( m_next_agg_group_id < m_total_agg_group_id ){ //move to the next agg group
+				if( m_agg_block_groups.find(m_next_agg_group_id)->second->get_kernel_queue_entry_id() == -1 ){ //next agg group info is stored in global memory
+				    //				extern bool extra_metadata_load_latency;
+				    extra_metadata_load_latency = true;
+				}
+			    }
+			}
+		    }
+
+		    m_next_tid.x=0;
+		    m_next_tid.y=0;
+		    m_next_tid.z=0;
 		}
+#endif
 		dim3 get_next_cta_id() const { return m_next_cta; }
 		bool no_more_ctas_to_run() const 
 		{
@@ -327,6 +356,10 @@ class kernel_info_t {
 		bool more_threads_in_cta() const 
 		{
 			return m_next_tid.z < m_block_dim.z && m_next_tid.y < m_block_dim.y && m_next_tid.x < m_block_dim.x;
+		}
+		bool last_block() const
+		{
+		    return (m_next_cta.x +1 == m_grid_dim.x) && (m_next_cta.y +1 == m_grid_dim.y) && (m_next_cta.z +1 == m_grid_dim.z);
 		}
 		unsigned get_uid() const { return m_uid; }
 		std::string name() const;
@@ -353,6 +386,8 @@ class kernel_info_t {
 		{ 
 		   m_param_mem = p_mem; 
 		}
+
+		//bddream - DKPL
 		void set_param_mem_base(addr_t p_mem_base){
 			m_param_mem_base = p_mem_base;
 		}
@@ -379,7 +414,8 @@ class kernel_info_t {
 
 		std::list<class ptx_thread_info *> m_active_threads;
 		class memory_space *m_param_mem;
-		// simulation kernel parameter read latency
+		//bddream - DKPL
+		//simulate device-launched kernel parameter read latency
 		addr_t m_param_mem_base;
 
 		//Andrew
@@ -401,13 +437,19 @@ class kernel_info_t {
 		void print_parent_info();
 		void destroy_cta_streams();
 		kernel_info_t * get_parent() { return m_parent_kernel; }
+		unsigned get_parent_block_idx() { return m_parent_block_idx; }
 		std::list<ptx_thread_info *> m_parent_threads; //Po-Han: parent threads
 		//Po-Han DCC
 		std::map<unsigned int, class memory_space *> m_param_mem_map;
 		std::map<unsigned int, addr_t> m_param_mem_base_map;
+		std::map<unsigned int, int> m_kernel_queue_entry_map;
 		bool is_child;
 		signed int param_entry_cnt;
 		unsigned **per_SM_block_cnt;
+		bool extra_metadata_load_latency; 
+		unsigned long long next_dispatchable_cycle;
+		unsigned int metadata_count;
+		unsigned int unissued_agg_groups;
 
 		// dekline
 		struct block_info *block_state;
@@ -419,6 +461,7 @@ class kernel_info_t {
 		std::list<unsigned int> preswitch_list;
 		std::list<unsigned int> switching_list;
 		std::list<unsigned int> preempted_list;
+		int get_kernel_queue_entry(int agg_group_id);
 
 		bool no_more_block_to_run()
 		{
@@ -588,8 +631,8 @@ class simt_stack {
 };
 
 //Po-Han: dynamic child thread consolidation, reserve 4G space for global heap
-#define DCC_PARAM_START   0xE0000000
-#define DCC_PARAM_END	0xF0000000
+#define CHILD_PARAM_START   0xE0000000
+#define CHILD_PARAM_END	0xF0000000
 //#define DCC_PARAM_START   0x180000000
 
 #define GLOBAL_HEAP_START 0x80000000
@@ -704,7 +747,7 @@ class gpgpu_functional_sim_config
 class gpgpu_t {
 	public:
 		gpgpu_t( const gpgpu_functional_sim_config &config );
-		void* dcc_param_malloc( size_t size ); //Po-Han: dynamic child-thread consolidation
+		void* child_param_malloc( size_t size ); //Po-Han: dynamic child-thread consolidation
 		void* gpu_malloc( size_t size );
 		void* gpu_mallocarray( size_t count );
 		void  gpu_memset( size_t dst_start_addr, int c, size_t count );
@@ -762,7 +805,7 @@ class gpgpu_t {
 		unsigned long long m_dev_malloc;
 
 		//Po-Han: dynamic child kernel consolidation
-		unsigned long long m_dcc_param_malloc;
+		unsigned long long m_child_param_malloc;
 
 		std::map<std::string, const struct textureReference*> m_NameToTextureRef;
 		std::map<const struct textureReference*,const struct cudaArray*> m_TextureRefToCudaArray;
@@ -814,6 +857,7 @@ class memory_space_t {
 			return false;
 		}
 		enum _memory_space_t get_type() const { return m_type; }
+		void set_type(const enum _memory_space_t &type) { m_type = type; }
 		unsigned get_bank() const { return m_bank; }
 		void set_bank( unsigned b ) { m_bank = b; }
 		bool is_const() const { return (m_type == const_space) || (m_type == param_space_kernel); }
@@ -1073,8 +1117,9 @@ class warp_inst_t: public inst_t {
 			m_uid=0;
 			m_empty=true; 
 			m_config=NULL; 
+			warp_kernel = NULL;
 		}
-		warp_inst_t( const core_config *config ) 
+		warp_inst_t( const core_config *config/*, kernel_info_t *kernel*/ ) 
 		{ 
 			m_uid=0;
 			assert(config->warp_size<=MAX_WARP_SIZE); 
@@ -1086,6 +1131,8 @@ class warp_inst_t: public inst_t {
 			m_cache_hit=false;
 			m_is_printf=false;
 			m_is_cdp = 0;
+
+//			warp_kernel = kernel;
 		}
 		virtual ~warp_inst_t(){
 		}
@@ -1098,7 +1145,7 @@ class warp_inst_t: public inst_t {
 		{ 
 			m_empty=true; 
 		}
-		void issue( const active_mask_t &mask, unsigned warp_id, unsigned long long cycle, int dynamic_warp_id ) 
+		void issue( const active_mask_t &mask, unsigned warp_id, unsigned long long cycle, int dynamic_warp_id, bool child ) 
 		{
 			m_warp_active_mask = mask;
 			m_warp_issued_mask = mask; 
@@ -1109,6 +1156,7 @@ class warp_inst_t: public inst_t {
 			cycles = initiation_interval;
 			m_cache_hit=false;
 			m_empty=false;
+			is_child = child;
 		}
 		const active_mask_t & get_active_mask() const
 		{
@@ -1152,6 +1200,7 @@ class warp_inst_t: public inst_t {
 		void memory_coalescing_arch_13_atomic( bool is_write, mem_access_type access_type );
 		void memory_coalescing_arch_13_reduce_and_send( bool is_write, mem_access_type access_type, const transaction_info &info, new_addr_type addr, unsigned segment_size );
 
+		bool check_global_constant_sharing_bypass(new_addr_type addr, unsigned pc);
 		void add_callback( unsigned lane_id, 
 				void (*function)(const class inst_t*, class ptx_thread_info*),
 				const inst_t *inst, 
@@ -1261,6 +1310,9 @@ class warp_inst_t: public inst_t {
 	public:
 		int m_is_cdp;
 
+		kernel_info_t *warp_kernel;
+		bool is_child;
+
 };
 
 //inline void move_warp( warp_inst_t *&dst, warp_inst_t *&src );
@@ -1331,6 +1383,8 @@ class core_t {
 		// dekline
 		class ptx_thread_info ** m_thread;
 		simt_stack **getSimtStack(){return m_simt_stack;};
+
+		unsigned long long next_dispatchable_cycle;
 	protected:
 		class gpgpu_sim *m_gpu;
 		kernel_info_t *m_kernel;

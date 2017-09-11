@@ -102,7 +102,7 @@ void gpgpu_functional_sim_config::ptx_set_tex_cache_linesize(unsigned linesize)
     m_dev_malloc=GLOBAL_HEAP_START; 
 
     //Po-Han dynamic child-thread consolidation
-    m_dcc_param_malloc=DCC_PARAM_START;
+    m_child_param_malloc=CHILD_PARAM_START;
 
     if(m_function_model_config.get_ptx_inst_debug_to_file() != 0) 
 	ptx_inst_debug_file = fopen(m_function_model_config.get_ptx_inst_debug_file(), "w");
@@ -212,6 +212,7 @@ void warp_inst_t::generate_mem_accesses()
 	case tex_space: 
 	    access_type = TEXTURE_ACC_R;   
 	    break;
+	case child_param_space: 
 	case global_space:       
 	    access_type = is_write? GLOBAL_ACC_W: GLOBAL_ACC_R;   
 	    break;
@@ -220,9 +221,9 @@ void warp_inst_t::generate_mem_accesses()
 	    access_type = is_write? LOCAL_ACC_W: LOCAL_ACC_R;   
 	    break;
 	case shared_space: break;
-	case dcc_param_space: 
+//	case child_param_space: 
 //			   fprintf(stdout, "leave generate_mem_accesses early\n");
-			   return;
+//			   return;
 	default: assert(0); break; 
     }
 
@@ -319,11 +320,42 @@ void warp_inst_t::generate_mem_accesses()
 	case tex_space: 
 			   cache_block_size = m_config->gpgpu_cache_texl1_linesize;
 			   break;
-	case const_space:  case param_space_kernel:
+
+	case param_space_kernel:
+//			   extern bool g_child_param_buffer_compaction;
+			   /* Po-Han 170602 Redirect device-launched kernel parameter loads from constant cache to unified L1 cache */
+			   extern bool g_param_acc_unified_L1;
+			   if( g_param_acc_unified_L1 ){
+			       if (m_per_scalar_thread[0].memreqaddr[0] >= CHILD_PARAM_START && m_per_scalar_thread[0].memreqaddr[0] < CHILD_PARAM_END ){
+				   space.set_type(global_space);
+				   access_type = GLOBAL_ACC_R;
+				   if( m_config->gpgpu_coalesce_arch == 13 ){
+				       if(isatomic())
+					   memory_coalescing_arch_13_atomic(is_write, access_type);
+				       else
+					   memory_coalescing_arch_13(is_write, access_type);
+				   } else abort();
+				   break;
+			       }
+			   }
+			   if (m_per_scalar_thread[0].memreqaddr[0] == 0xFEEBDAED){ //consntant accesses are bypassed
+//			       printf("Bypass parameter loads\n");
+			       return;
+			   } /*else if (g_child_param_buffer_compaction){
+			       if( m_per_scalar_thread[0].memreqaddr[0] >= CHILD_PARAM_START && m_per_scalar_thread[0].memreqaddr[0] < CHILD_PARAM_END){
+				   space.set_type(global_space);
+				   memory_coalescing_arch_13(false, GLOBAL_ACC_R); //access data cache for child kernel parameters;
+			       }
+			   }*/ else {
+			       cache_block_size = m_config->gpgpu_cache_constl1_linesize;
+			   }
+			   break;
+	case const_space:  //case param_space_kernel:
 			   cache_block_size = m_config->gpgpu_cache_constl1_linesize; 
 			   break;
 
 	case global_space: case local_space: case param_space_local:
+	case child_param_space:
 			   if( m_config->gpgpu_coalesce_arch == 13 ) {
 			       if(isatomic())
 				   memory_coalescing_arch_13_atomic(is_write, access_type);
@@ -337,23 +369,40 @@ void warp_inst_t::generate_mem_accesses()
 			   abort();
     }
 
+    bool global_constant_sharing_bypass;
+    std::map<new_addr_type,active_mask_t> accesses; // block address -> set of thread offsets in warp
     if( cache_block_size ) {
 	assert( m_accessq.empty() );
 	mem_access_byte_mask_t byte_mask; 
-	std::map<new_addr_type,active_mask_t> accesses; // block address -> set of thread offsets in warp
+//	std::map<new_addr_type,active_mask_t> accesses; // block address -> set of thread offsets in warp
 	std::map<new_addr_type,active_mask_t>::iterator a;
 	for( unsigned thread=0; thread < m_config->warp_size; thread++ ) {
 	    if( !active(thread) ) 
 		continue;
 	    new_addr_type addr = m_per_scalar_thread[thread].memreqaddr[0];
-//	    if(space.get_type() == param_space_kernel){
+#if 0
+	    global_constant_sharing_bypass = false;
+	    if(space.get_type() == param_space_kernel){
 //		    printf("Kernel parameter access at address 0x%llx\n", addr);
+		extern int g_global_constant_pointer_sharing;
+		extern bool g_child_param_buffer_compaction;
+		if( !g_child_param_buffer_compaction ){
+		    if( g_global_constant_pointer_sharing != 4 )
+			global_constant_sharing_bypass = check_global_constant_sharing_bypass(addr, pc);
+		    if( global_constant_sharing_bypass ) {
+			extern int g_child_kernel_param_bypass_cnt[2];
+			g_child_kernel_param_bypass_cnt[0]++;
+		    }
+		}
+	    }
+#endif
+//	    if(!global_constant_sharing_bypass){
+		unsigned block_address = line_size_based_tag_func(addr,cache_block_size);
+		accesses[block_address].set(thread);
+		unsigned idx = addr-block_address; 
+		for( unsigned i=0; i < data_size; i++ ) 
+		    byte_mask.set(idx+i);
 //	    }
-	    unsigned block_address = line_size_based_tag_func(addr,cache_block_size);
-	    accesses[block_address].set(thread);
-	    unsigned idx = addr-block_address; 
-	    for( unsigned i=0; i < data_size; i++ ) 
-		byte_mask.set(idx+i);
 	}
 	for( a=accesses.begin(); a != accesses.end(); ++a ) 
 	    m_accessq.push_back( mem_access_t(access_type,a->first,cache_block_size,is_write,a->second,byte_mask) );
@@ -362,7 +411,10 @@ void warp_inst_t::generate_mem_accesses()
     if ( space.get_type() == global_space ) {
 	ptx_file_line_stats_add_uncoalesced_gmem( pc, m_accessq.size() - starting_queue_size );
     }
-    m_mem_accesses_created=true;
+
+    /* may actually not genearting any cache accesses because of global constant parameter sharing */
+    if(accesses.size() != 0)
+	m_mem_accesses_created=true;
 }
 
 void warp_inst_t::memory_coalescing_arch_13( bool is_write, mem_access_type access_type )
@@ -377,6 +429,8 @@ void warp_inst_t::memory_coalescing_arch_13( bool is_write, mem_access_type acce
     }
     unsigned subwarp_size = m_config->warp_size / warp_parts;
 
+    bool global_constant_sharing_bypass;
+
     for( unsigned subwarp=0; subwarp <  warp_parts; subwarp++ ) {
 	std::map<new_addr_type,transaction_info> subwarp_transactions;
 
@@ -388,7 +442,8 @@ void warp_inst_t::memory_coalescing_arch_13( bool is_write, mem_access_type acce
 	    unsigned data_size_coales = data_size;
 	    unsigned num_accesses = 1;
 
-	    if( space.get_type() == local_space || space.get_type() == param_space_local || space.get_type() == dcc_param_space  ) {
+	    // bddream TEST: parameter writes should not split into 4B chunks
+	    if( space.get_type() == local_space || space.get_type() == param_space_local /*|| space.get_type() == child_param_space*/  ) {
 		// Local memory accesses >4B were split into 4B chunks
 		if(data_size >= 4) {
 		    data_size_coales = 4;
@@ -401,20 +456,33 @@ void warp_inst_t::memory_coalescing_arch_13( bool is_write, mem_access_type acce
 	    assert(num_accesses <= MAX_ACCESSES_PER_INSN_PER_THREAD);
 
 	    for(unsigned access=0; access<num_accesses; access++) {
+		global_constant_sharing_bypass = false;
 		new_addr_type addr = m_per_scalar_thread[thread].memreqaddr[access];
-		unsigned block_address = line_size_based_tag_func(addr,segment_size);
-		unsigned chunk = (addr&127)/32; // which 32-byte chunk within in a 128-byte chunk does this thread access?
-		transaction_info &info = subwarp_transactions[block_address];
+		extern int g_global_constant_pointer_sharing;
+		if( space.get_type() == child_param_space ) {
+//		    if( g_global_constant_pointer_sharing != 3 ){
+			global_constant_sharing_bypass = check_global_constant_sharing_bypass(addr, pc);
+//		    }
+		}
+//		if( global_constant_sharing_bypass ) {
+//		    extern int g_child_kernel_param_bypass_cnt[2];
+//		    g_child_kernel_param_bypass_cnt[1]++;
+//		}
+		if( !global_constant_sharing_bypass ){
+		    unsigned block_address = line_size_based_tag_func(addr,segment_size);
+		    unsigned chunk = (addr&127)/32; // which 32-byte chunk within in a 128-byte chunk does this thread access?
+		    transaction_info &info = subwarp_transactions[block_address];
 
-		// can only write to one segment
-		//		fprintf(stdout, "space = %d block_address = %u, addr = %llx, segment_size = %u\n", space.get_type(), block_address, addr, segment_size);
-		assert(block_address == line_size_based_tag_func(addr+data_size_coales-1,segment_size));
+		    // can only write to one segment
+		    //		fprintf(stdout, "space = %d block_address = %u, addr = %llx, segment_size = %u\n", space.get_type(), block_address, addr, segment_size);
+		    //		assert(block_address == line_size_based_tag_func(addr+data_size_coales-1,segment_size));
 
-		info.chunks.set(chunk);
-		info.active.set(thread);
-		unsigned idx = (addr&127);
-		for( unsigned i=0; i < data_size_coales; i++ )
-		    info.bytes.set(idx+i);
+		    info.chunks.set(chunk);
+		    info.active.set(thread);
+		    unsigned idx = (addr&127);
+		    for( unsigned i=0; i < data_size_coales; i++ )
+			info.bytes.set(idx+i);
+		}
 	    }
 	}
 
@@ -555,6 +623,54 @@ void warp_inst_t::memory_coalescing_arch_13_reduce_and_send( bool is_write, mem_
 	}
     }
     m_accessq.push_back( mem_access_t(access_type,addr,size,is_write,info.active,info.bytes) );
+    extern unsigned long long g_total_ld_cache_line, g_total_st_cache_line;
+    if(is_write) g_total_st_cache_line++;
+    else g_total_ld_cache_line++;
+}
+
+/* Checking is a child kernel parameter access can bypass since it is a global constant parameter */
+bool warp_inst_t::check_global_constant_sharing_bypass( new_addr_type addr, unsigned pc )
+{
+//    extern bool g_child_param_buffer_compaction;
+    extern int g_global_constant_pointer_sharing;
+//    extern int g_child_parameter_buffer_alignment;
+    extern application_id g_app_name;
+//    extern int global_constant_offset[12][6];
+    extern unsigned global_constant_pc[12][12];
+    if(addr >= CHILD_PARAM_START && addr < CHILD_PARAM_END){
+	if(g_global_constant_pointer_sharing > 0){
+	    if(g_global_constant_pointer_sharing == 2){ // always bypass
+//		printf("CPB: always bypassing\n");
+		return true;
+	    } else if (g_global_constant_pointer_sharing == 1){ 
+//		if(g_child_param_buffer_compaction){
+		    //check PC
+		if(g_app_name == 1 || g_app_name == 7 || g_app_name == 8 ){
+		    if ( (pc >= global_constant_pc[g_app_name][0] && pc <= global_constant_pc[g_app_name][1]) ||
+			 (pc >= global_constant_pc[g_app_name][2] && pc <= global_constant_pc[g_app_name][3]) )
+			return true;
+		} else {
+		    for( int i = 0; i < 12; i++ ){
+			if( global_constant_pc[g_app_name][i] == pc ){
+			    //			    printf("CPB: pc 0x%04X app_name %d gc_num %d\n", pc, g_app_name, i);
+			    return true;
+			}
+		    }
+		}
+		//		} else {
+		    // check address
+//		    unsigned int offset = addr % g_child_parameter_buffer_alignment;
+//		    for( int i = 0; i < 6; i++ ){
+//			if( global_constant_offset[g_app_name][i] != -1 && global_constant_offset[g_app_name][i] == offset ){
+			    //			printf("CPB: addr %llx offset %d app_name %d gc_num %d\n", addr, offset, g_app_name, i);
+//			    return true;
+//			}
+//		    }
+//		}
+	    }
+	}
+    }
+    return false;
 }
 
 void warp_inst_t::completed( unsigned long long cycle ) const 
@@ -566,7 +682,7 @@ void warp_inst_t::completed( unsigned long long cycle ) const
 
 //Jin: kernel launch latency and overhead
 unsigned g_kernel_launch_latency;
-extern unsigned long long g_total_param_size;
+extern signed long long g_total_param_size;
 
 unsigned kernel_info_t::m_next_uid = 1;
 
@@ -631,6 +747,12 @@ kernel_info_t::kernel_info_t( dim3 gridDim, dim3 blockDim, class function_info *
     m_next_cta.y = 0;
     m_next_cta.z = 0;
     //switched_done = 0;
+    //
+    start_cycle = 0;
+    extra_metadata_load_latency = false;
+    next_dispatchable_cycle = 0;
+    metadata_count = 1;
+    unissued_agg_groups = 0;
 }
 
 // bddream DCC
@@ -703,6 +825,29 @@ kernel_info_t::~kernel_info_t()
     assert( m_active_threads.empty() );
     destroy_cta_streams();
     destroy_agg_block_groups();
+
+    extern bool g_dyn_child_thread_consolidation;
+    if( g_dyn_child_thread_consolidation ){
+	extern bool *g_kernel_queue_entry_empty;
+	extern unsigned int g_kernel_queue_entry_used, g_kernel_queue_entry_running;
+	std::map<unsigned int, int>::iterator it;
+	for( it = m_kernel_queue_entry_map.begin(); it != m_kernel_queue_entry_map.end(); it++){
+	    if(it->second != -1){
+		assert(g_kernel_queue_entry_empty[it->second] == false);
+		g_kernel_queue_entry_empty[it->second] = true;
+		if( g_kernel_queue_entry_used ) g_kernel_queue_entry_used--;
+		if( g_kernel_queue_entry_running) g_kernel_queue_entry_running--;
+	    } else {
+		extern unsigned long long total_num_offchip_metadata;
+		if( total_num_offchip_metadata > 0 )
+		    total_num_offchip_metadata--;
+		printf("DKC: reclaim an off-chip kernel metadata, %llu remaining\n", total_num_offchip_metadata);
+	    }
+	    printf("TDQ, %llu, %d, %d, D\n", gpu_sim_cycle+gpu_tot_sim_cycle, it->second, g_kernel_queue_entry_used);
+	}
+	printf("DKC: Consolidated kernel ends, MDB usage %u, MDB running %u\n", g_kernel_queue_entry_used, g_kernel_queue_entry_running);
+//	delete m_kernel_queue_entry_map;
+    }
     delete m_param_mem;
     // dekline
     delete[] block_state;
@@ -728,17 +873,17 @@ void kernel_info_t::set_parent(kernel_info_t * parent,
 
 //Po-Han: DCC: add a new parent thread for the child kernel
 void kernel_info_t::add_parent(kernel_info_t * parent, ptx_thread_info * thread) {
-	if(!m_parent_kernel){ 
-		m_parent_kernel = parent;
-		m_parent_agg_group_id = thread->get_agg_group_id();
-		m_parent_ctaid = thread->get_ctaid();
-		m_parent_tid = thread->get_tid();
-    parent->set_child(this);
-		fprintf(stdout, "DCC: adding parent-child relation between %llx (B%u, T%u) and %llx, %llx now has %d childs.\n", parent, m_parent_ctaid.x, m_parent_tid.x, this, parent, parent->get_child_count());
-	}
-	m_parent_threads.push_back(thread);
-	//    parent->set_child(this);
-	//    fprintf(stdout, "DCC: adding parent-child relation between %llx and %llx, %llx now has %d childs.\n", parent, this, parent, parent->get_child_count());
+    if(!m_parent_kernel){ 
+	m_parent_kernel = parent;
+	m_parent_agg_group_id = thread->get_agg_group_id();
+	m_parent_ctaid = thread->get_ctaid();
+	m_parent_tid = thread->get_tid();
+	parent->set_child(this);
+	fprintf(stdout, "DCC: adding parent-child relation between %llx (B%u, T%u) and %llx, %llx now has %d childs.\n", parent, m_parent_ctaid.x, m_parent_tid.x, this, parent, parent->get_child_count());
+    }
+    m_parent_threads.push_back(thread);
+    //    parent->set_child(this);
+    //    fprintf(stdout, "DCC: adding parent-child relation between %llx and %llx, %llx now has %d childs.\n", parent, this, parent, parent->get_child_count());
 }
 
 void kernel_info_t::set_child(kernel_info_t * child) {
@@ -766,65 +911,102 @@ bool kernel_info_t::children_all_finished() {
 }
 
 void kernel_info_t::notify_parent_finished() {
-   unsigned tmp_parent_block_idx, tmp_parent_thread_idx;
-   if(m_parent_kernel) {
-      if(g_dyn_child_thread_consolidation){ 
-         if(name().find("kmeansPoint_CdpKernel") != std::string::npos ||
-//           name().find("spmv_csr_scalar_CdpKernel") != std::string::npos ||
-//           name().find("mis1_CdpKernel") != std::string::npos ||
-           name().find("bfs_CdpKernel") != std::string::npos ||
-           name().find("backtrack_CdpKernel") != std::string::npos ){
-            std::list<ptx_thread_info *>::iterator it;
-            for(it=m_parent_threads.begin(); it!=m_parent_threads.end(); it++){
-               tmp_parent_block_idx = (*it)->get_block_idx();
-               tmp_parent_thread_idx = (*it)->get_thread_idx();
-               m_parent_kernel->block_state[tmp_parent_block_idx].thread.set(tmp_parent_thread_idx);
-               fprintf(stdout, "DCC: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx, tmp_parent_thread_idx);
-            }
-         }
-         if(m_parent_kernel->parent_child_dependency) {
-            if(m_parent_kernel->block_state[tmp_parent_block_idx].thread.all()){
-		  if(m_parent_kernel->block_state[tmp_parent_block_idx].switched == 1){
-               m_parent_kernel->block_state[tmp_parent_block_idx].switched = 0;
-               fprintf(stdout, "DCC: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), tmp_parent_block_idx);
-		  }
-            }
-         }
-      }else if(!g_agg_blocks_support){
-         m_parent_kernel->block_state[m_parent_block_idx].thread.set(m_parent_thread_idx);
-         fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
-         if(m_parent_kernel->parent_child_dependency) {
-            if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
-               if(m_parent_kernel->block_state[m_parent_block_idx].preempted){ //preempted --> re-issue it
-                  m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
-                  fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block preempteded --> re-issue it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
-               }else{ //not yet preempted --> mark-off the switch bit
-		  if(m_parent_kernel->block_state[m_parent_block_idx].switched == 1){
-                     m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
-		     m_parent_kernel->switching_list.remove(m_parent_block_idx);
-		     m_parent_kernel->preswitch_list.remove(m_parent_block_idx);
-                     fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
-		  }
-               }
-//               fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished\n", m_parent_kernel->get_uid(), m_parent_block_idx);
-            }
-         }
-      }
-      g_total_param_size -= ((m_kernel_entry->get_args_aligned_size() + 255)/256*256);
-      m_parent_kernel->remove_child(this);
-      fprintf(stdout, "Remove child-kernel %d from parent %d, %d now has %d childs.\n", this->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_child_count());
-      g_stream_manager->register_finished_kernel(m_parent_kernel->get_uid());
-      /* TODO: Po-Han DCC
-       * 1) set the corresponding parent threads as child-finished
-       * 2) if a whole parent block are child-finished, context switch it back (cdp) or resume it (DCC
-       */
-   }
+    unsigned tmp_parent_block_idx, tmp_parent_thread_idx;
+    if(m_parent_kernel) {
+	if(name().find("kmeansPoint_CdpKernel") != std::string::npos || 
+		name().find("calc_pi_CdpKernel") != std::string::npos ||
+		name().find("update_bias_CdpKernel") != std::string::npos ||
+		name().find("find1_CdpKernel") != std::string::npos ||
+		name().find("find2_CdpKernel") != std::string::npos ||
+		name().find("relabelUnrollKernel") != std::string::npos ){
+	    if(g_agg_blocks_support || g_dyn_child_thread_consolidation){ //DTBL or DKC
+		char mech[5], sche[5];
+		extern bool g_child_aware_smk_scheduling;
+		if(g_dyn_child_thread_consolidation) sprintf(mech, "DKC");
+		else sprintf(mech, "DTBL");
+		if(g_child_aware_smk_scheduling) sprintf(sche, "-DPS");
+		else sprintf(sche, "");
+
+		std::list<ptx_thread_info *>::iterator it;
+		for(it=m_parent_threads.begin(); it!=m_parent_threads.end(); it++){
+		    tmp_parent_block_idx = (*it)->get_block_idx();
+		    tmp_parent_thread_idx = (*it)->get_thread_idx();
+		    m_parent_kernel->block_state[tmp_parent_block_idx].thread.set(tmp_parent_thread_idx);
+		    fprintf(stdout, "%s: [%d, %d, %d] -- child kernel finished\n", mech, m_parent_kernel->get_uid(), tmp_parent_block_idx, tmp_parent_thread_idx);
+		    if(g_child_aware_smk_scheduling){ //DPS
+			if(m_parent_kernel->block_state[tmp_parent_block_idx].thread.all()){
+			    if(m_parent_kernel->block_state[tmp_parent_block_idx].switched == 1){
+				m_parent_kernel->block_state[tmp_parent_block_idx].switched = 0;
+				fprintf(stdout, "%s%s: [%d, %d] -- all child kernels finished\n", mech, sche, m_parent_kernel->get_uid(), tmp_parent_block_idx);
+			    }
+			}
+		    } else { //nonDPS
+			if(m_parent_kernel->block_state[tmp_parent_block_idx].thread.all()){
+			    if(m_parent_kernel->block_state[tmp_parent_block_idx].preempted){ //preempted --> re-issue it
+				m_parent_kernel->block_state[tmp_parent_block_idx].reissue = 1;
+				fprintf(stdout, "%s%s: [%d, %d] -- all child kernels finished, parent block preempteded --> re-issue it\n", mech, sche, m_parent_kernel->get_uid(), tmp_parent_block_idx);
+			    }else{ //not yet preempted --> mark-off the switch bit
+				if(m_parent_kernel->block_state[tmp_parent_block_idx].switched == 1){
+				    m_parent_kernel->block_state[tmp_parent_block_idx].switched = 0;
+				    m_parent_kernel->switching_list.remove(tmp_parent_block_idx);
+				    m_parent_kernel->preswitch_list.remove(tmp_parent_block_idx);
+				    fprintf(stdout, "%s%s: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", mech, sche, m_parent_kernel->get_uid(), tmp_parent_block_idx);
+				}
+			    }
+			}
+		    }
+		}
+	    } else { //CDP
+		m_parent_kernel->block_state[m_parent_block_idx].thread.set(m_parent_thread_idx);
+		tmp_parent_block_idx = m_parent_block_idx;
+		fprintf(stdout, "CDP: [%d, %d, %d] -- child kernel finished\n", m_parent_kernel->get_uid(), m_parent_block_idx, m_parent_thread_idx);
+		if(m_parent_kernel->block_state[m_parent_block_idx].thread.all()){
+		    if(m_parent_kernel->block_state[m_parent_block_idx].preempted){ //preempted --> re-issue it
+			m_parent_kernel->block_state[m_parent_block_idx].reissue = 1;
+			fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block preempteded --> re-issue it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+		    }else{ //not yet preempted --> mark-off the switch bit
+			if(m_parent_kernel->block_state[m_parent_block_idx].switched == 1){
+			    m_parent_kernel->block_state[m_parent_block_idx].switched = 0;
+			    m_parent_kernel->switching_list.remove(m_parent_block_idx);
+			    m_parent_kernel->preswitch_list.remove(m_parent_block_idx);
+			    fprintf(stdout, "CDP: [%d, %d] -- all child kernels finished, parent block not-yet preempted --> resume it\n", m_parent_kernel->get_uid(), m_parent_block_idx);
+			}
+		    }
+		}
+	    }
+	}
+	extern int g_child_parameter_buffer_alignment;
+	extern bool g_global_constant_pointer_sharing;
+	extern int per_kernel_param_usage[12];
+	extern application_id g_app_name;
+	int param_buf_size;
+	
+	if(g_global_constant_pointer_sharing == 1)
+	    param_buf_size = per_kernel_param_usage[g_app_name];
+	else
+	    param_buf_size = m_kernel_entry->get_args_aligned_size();
+
+	if( g_dyn_child_thread_consolidation ){
+	    g_total_param_size -= metadata_count * ((param_buf_size + g_child_parameter_buffer_alignment - 1) / g_child_parameter_buffer_alignment * g_child_parameter_buffer_alignment);
+	} else {
+	    g_total_param_size -= ((param_buf_size + g_child_parameter_buffer_alignment - 1) / g_child_parameter_buffer_alignment * g_child_parameter_buffer_alignment);
+	}
+	if(g_total_param_size < 0) g_total_param_size = 0;
+	m_parent_kernel->remove_child(this);
+	fprintf(stdout, "Remove child-kernel %d from parent %d, %d now has %d childs.\n", this->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_uid(), m_parent_kernel->get_child_count());
+	g_stream_manager->register_finished_kernel(m_parent_kernel->get_uid());
+	/* TODO: Po-Han DCC
+	 * 1) set the corresponding parent threads as child-finished
+	 * 2) if a whole parent block are child-finished, context switch it back (cdp) or resume it (DCC
+	 */
+
+    }
 }
 
 CUstream_st * kernel_info_t::create_stream_cta(int agg_group_id, dim3 ctaid) {
-    assert(get_default_stream_cta(agg_group_id, ctaid));
-//    get_default_stream_cta(agg_group_id, ctaid);
-    CUstream_st * stream = new CUstream_st();
+	   assert(get_default_stream_cta(agg_group_id, ctaid));
+	   //    get_default_stream_cta(agg_group_id, ctaid);
+	   CUstream_st * stream = new CUstream_st();
     g_stream_manager->add_stream(stream);
     agg_block_id_t agg_block_id(agg_group_id, ctaid);
     assert(m_cta_streams.find(agg_block_id) != m_cta_streams.end());
@@ -921,7 +1103,7 @@ void kernel_info_t::destroy_cta_streams() {
 	stream_size += s->second.size();
 	if(s->second.size() != 0){
 	for(auto ss = s->second.begin(); ss != s->second.end(); ss++){
-	    g_stream_manager->destroy_stream(*ss);
+//	    g_stream_manager->destroy_stream(*ss);
 //            fprintf(stdout, "STREAMMANAGER, %d, %u, %u, %u, del, %0llx, %d\n", s->first.first, s->first.second.x, s->first.second.y, s->first.second.x, *ss, g_stream_manager->stream_count()); fflush(stdout);
         }
 	}
@@ -945,6 +1127,7 @@ void kernel_info_t::add_agg_block_group(agg_block_group_t * agg_block_group) {
 	    m_agg_block_groups.end());
     m_agg_block_groups[m_total_agg_group_id] = agg_block_group;
 
+    printf("DTBL: kernel %u add agg group, totally %d\n", m_uid, m_total_agg_group_id);
     m_total_agg_group_id++;
 
     delete[] block_state;
@@ -963,13 +1146,45 @@ void kernel_info_t::add_agg_block_group(agg_block_group_t * agg_block_group) {
        block_state[i].time_stamp_switching_issue = 0;
        block_state[i].thread.set();
     }
+
+    assert(unissued_agg_groups);
+    unissued_agg_groups--;
+    m_parent_threads.push_back(agg_block_group->get_parent_thd()); //record parent thread for parent-child dependency support
 }
 
 void kernel_info_t::destroy_agg_block_groups() {
     for(auto agg_block_group = m_agg_block_groups.begin(); 
 	    agg_block_group != m_agg_block_groups.end();
 	    agg_block_group++) {
-	g_total_param_size -= ((m_kernel_entry->get_args_aligned_size() + 255)/256*256);
+	/* modeling the on-chip kernel queue */
+#if 1
+	extern bool *g_kernel_queue_entry_empty;
+	extern unsigned int g_kernel_queue_entry_used;//, g_kernel_queue_entry_running; 
+	if( agg_block_group->second->get_kernel_queue_entry_id() == -1 ){
+	    extern unsigned long long total_num_offchip_metadata;
+	    if(total_num_offchip_metadata > 0) total_num_offchip_metadata--;
+	} else {
+	    assert(g_kernel_queue_entry_empty[agg_block_group->second->get_kernel_queue_entry_id()] == false);
+	    g_kernel_queue_entry_empty[agg_block_group->second->get_kernel_queue_entry_id()] = true;
+	    g_kernel_queue_entry_used--;
+//	    g_kernel_queue_entry_running--;
+	    printf("DTBL: cycle %llu reclaim kernel queue entry %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, agg_block_group->second->get_kernel_queue_entry_id());
+	}
+#endif
+	extern int g_child_parameter_buffer_alignment;
+	extern bool g_global_constant_pointer_sharing;
+	extern int per_kernel_param_usage[12];
+	extern application_id g_app_name;
+	int param_buf_size;
+	
+	if(g_global_constant_pointer_sharing == 1)
+	    param_buf_size = per_kernel_param_usage[g_app_name];
+	else
+	    param_buf_size = m_kernel_entry->get_args_aligned_size();
+
+	g_total_param_size -= ((param_buf_size + g_child_parameter_buffer_alignment - 1)/ g_child_parameter_buffer_alignment * g_child_parameter_buffer_alignment);
+	if(g_total_param_size < 0) g_total_param_size = 0;
+
 	delete agg_block_group->second;
     }
 
@@ -992,6 +1207,66 @@ addr_t kernel_info_t::get_agg_param_mem_base(int agg_group_id) {
     assert(m_agg_block_groups.find(agg_group_id) !=
 	    m_agg_block_groups.end());
     return m_agg_block_groups.find(agg_group_id)->second->get_param_memory_base();
+}
+
+void kernel_info_t::increment_cta_id() 
+{ 
+    dim3 next_grid_dim = get_grid_dim(m_next_agg_group_id);
+    if(increment_x_then_y_then_z(m_next_cta, next_grid_dim)) { //overbound
+	m_next_agg_group_id++;
+	m_next_cta.x = 0;
+	m_next_cta.y = 0;
+	m_next_cta.z = 0;
+	printf("DTBL: kernel %u overbound. next agg group %d total agg group %d\n", m_uid, m_next_agg_group_id, m_total_agg_group_id);
+
+	extern bool g_dcc_kernel_param_onchip;
+	if( g_dcc_kernel_param_onchip && is_child ){
+	    extern signed kernel_param_usage;
+	    extern signed long long param_buffer_usage;
+	    extern unsigned g_max_param_buffer_size;
+	    extern unsigned g_param_buffer_thres_low;
+	    extern bool param_buffer_full; 
+	    param_buffer_usage -= kernel_param_usage;
+	    if(param_buffer_usage < 0) param_buffer_usage = 0;
+	    fprintf(stdout, "KPM: Clear an entry, param_buffer usage %lld", param_buffer_usage);
+	    if(param_buffer_usage * 100 < g_max_param_buffer_size * g_param_buffer_thres_low){
+		param_buffer_full = false;
+		fprintf(stdout, ", <%u\%, turn-off full bit", g_param_buffer_thres_low);
+	    }
+	    fprintf(stdout, "\n");
+	}
+	extern bool g_estimate_offchip_metadata_load_latency;
+	if( g_estimate_offchip_metadata_load_latency ){
+	    if( m_next_agg_group_id < m_total_agg_group_id ){ //move to the next agg group
+#if 0
+Y		int kernel_queue_entry = m_agg_block_groups.find(m_next_agg_group_id)->second->get_kernel_queue_entry_id();
+		printf("DTBL: cycle %llu next agg group %d queue entry %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, m_next_agg_group_id, kernel_queue_entry);
+		if( kernel_queue_entry == -1 ){ //next agg group info is stored in global memory
+		    //				extern bool extra_metadata_load_latency;
+		    extra_metadata_load_latency = true;
+		    extern unsigned long long total_num_offchip_metadata;
+		    if(total_num_offchip_metadata > 0) total_num_offchip_metadata--;
+		} else {
+		    extern bool *g_kernel_queue_entry_empty;
+		    extern unsigned int g_kernel_queue_entry_used; 
+		    assert(g_kernel_queue_entry_empty[kernel_queue_entry] == false);
+		    g_kernel_queue_entry_empty[kernel_queue_entry] = true;
+		    g_kernel_queue_entry_used--;
+		    printf("DTBL: cycle %llu reclaim kernel queue entry %d\n", gpu_sim_cycle+gpu_tot_sim_cycle, kernel_queue_entry);
+		}
+#endif
+	    }
+	}
+    }
+
+    m_next_tid.x=0;
+    m_next_tid.y=0;
+    m_next_tid.z=0;
+}
+
+int kernel_info_t::get_kernel_queue_entry(int agg_group_id)
+{
+    return m_agg_block_groups.find(agg_group_id)->second->get_kernel_queue_entry_id();
 }
 
 simt_stack::simt_stack( unsigned wid, unsigned warpSize)

@@ -928,6 +928,8 @@ extern "C" {
 		std::string kname = grid->name();
 		dim3 gridDim = config.grid_dim();
 		dim3 blockDim = config.block_dim();
+		extern unsigned long long kernel_consolidation_engine_busy_until;
+		kernel_consolidation_engine_busy_until = gpu_tot_sim_cycle;
 		printf("GPGPU-Sim PTX: pushing kernel \'%s\' to stream %u, gridDim= (%u,%u,%u) blockDim = (%u,%u,%u) \n",
 				kname.c_str(), stream?stream->get_uid():0, gridDim.x,gridDim.y,gridDim.z,blockDim.x,blockDim.y,blockDim.z );
 		stream_operation op(grid,g_ptx_sim_mode,stream);

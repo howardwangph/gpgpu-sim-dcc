@@ -158,7 +158,7 @@ void dram_t::scheduler_frfcfs()
             req->data->set_status(IN_PARTITION_MC_BANK_ARB_QUEUE,gpu_sim_cycle+gpu_tot_sim_cycle);
             prio = (prio+1)%m_config->nbk;
             bk[b]->mrq = req;
-            if (m_config->gpgpu_memlatency_stat) {
+            if (m_config->gpgpu_memlatency_stat > 0) {
                mrq_latency = gpu_sim_cycle + gpu_tot_sim_cycle - bk[b]->mrq->timestamp;
                bk[b]->mrq->timestamp = gpu_tot_sim_cycle + gpu_sim_cycle;
                m_stats->mrq_lat_table[LOGB2(mrq_latency)]++;

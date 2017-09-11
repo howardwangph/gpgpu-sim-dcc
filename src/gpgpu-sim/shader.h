@@ -70,6 +70,7 @@ bytes: 6 address (flit can specify chanel so this gives up to ~2GB/channel, so g
 
 #define WRITE_MASK_SIZE 8
 
+extern unsigned int total_active_warp;
 
 class thread_ctx_t {
 	public:
@@ -116,12 +117,15 @@ class shd_warp_t {
 			//Jin: cdp support
 			m_cdp_latency = 0;
 			m_cdp_dummy = false;
+
+			is_child = false;
 		}
 		void init( address_type start_pc,
 				unsigned cta_id,
 				unsigned wid,
 				const std::bitset<MAX_WARP_SIZE> &active,
-				unsigned dynamic_warp_id )
+				unsigned dynamic_warp_id,
+				bool child)
 		{
 			m_cta_id=cta_id;
 			m_warp_id=wid;
@@ -136,6 +140,8 @@ class shd_warp_t {
 			//Jin: cdp support
 			m_cdp_latency = 0;
 			m_cdp_dummy = false;
+
+			is_child = child;
 		}
 
 		//inline bool functional_done() const;
@@ -304,6 +310,8 @@ class shd_warp_t {
 		const warp_inst_t *m_inst_at_barrier;
 		class shader_core_ctx *m_shader;
 		//////////////////////
+		
+		bool is_child;
 	
 	private:
 		static const unsigned IBUFFER_SIZE=2;
@@ -355,6 +363,7 @@ enum concrete_scheduler
 {
 	CONCRETE_SCHEDULER_LRR = 0,
 	CONCRETE_SCHEDULER_GTO,
+	CONCRETE_SCHEDULER_GTCTO,
 	CONCRETE_SCHEDULER_TWO_LEVEL_ACTIVE,
 	CONCRETE_SCHEDULER_WARP_LIMITING,
 	NUM_CONCRETE_SCHEDULERS
@@ -378,6 +387,9 @@ class scheduler_unit { //this can be copied freely, so can be used in std contai
 		}
 		virtual void done_adding_supervised_warps() {
 			m_last_supervised_issued = m_supervised_warps.end();
+		}
+		virtual void add_all_warp_id(int i){
+		   m_all_warps.push_back(&warp(i));
 		}
 
 
@@ -413,6 +425,8 @@ class scheduler_unit { //this can be copied freely, so can be used in std contai
 					bool (*priority_func)(U lhs, U rhs) );
 		static bool sort_warps_by_oldest_dynamic_id(shd_warp_t* lhs, shd_warp_t* rhs);
 
+		static bool sort_warps_by_child_then_by_oldest_dynamic_id(shd_warp_t* lhs, shd_warp_t* rhs);
+
 		// Derived classes can override this function to populate
 		// m_supervised_warps with their scheduling policies
 		virtual void order_warps() = 0;
@@ -436,6 +450,10 @@ class scheduler_unit { //this can be copied freely, so can be used in std contai
 		// one warp scheduler. In a single scheduler system, this is simply all
 		// the warps assigned to this core.
 		std::vector< shd_warp_t* > m_supervised_warps;
+
+		// Allow all schedulers to issue child warps during child consuming phase
+		std::vector< shd_warp_t* > m_all_warps;
+
 		// This is the iterator pointer to the last supervised warp you issued
 		std::vector< shd_warp_t* >::const_iterator m_last_supervised_issued;
 		shader_core_stats *m_stats;
@@ -486,6 +504,23 @@ class gto_scheduler : public scheduler_unit {
 
 };
 
+class gtcto_scheduler : public scheduler_unit {
+	public:
+		gtcto_scheduler ( shader_core_stats* stats, shader_core_ctx* shader,
+				Scoreboard* scoreboard, simt_stack** simt,
+				std::vector<shd_warp_t>* warp,
+				register_set* sp_out,
+				register_set* sfu_out,
+				register_set* mem_out,
+				int id )
+			: scheduler_unit ( stats, shader, scoreboard, simt, warp, sp_out, sfu_out, mem_out, id ){}
+		virtual ~gtcto_scheduler () {}
+		virtual void order_warps ();
+		virtual void done_adding_supervised_warps() {
+			m_last_supervised_issued = m_supervised_warps.begin();
+		}
+
+};
 
 class two_level_active_scheduler : public scheduler_unit {
 	public:
@@ -1413,6 +1448,7 @@ struct shader_core_stats_pod {
 	unsigned long long *shader_cycles;
 	unsigned *m_num_sim_insn; // number of scalar thread instructions committed by this shader core
 	unsigned *m_num_sim_winsn; // number of warp instructions committed by this shader core
+	unsigned *m_num_sim_winsn_child; // number of child warp instructions committed by this shader core
 	unsigned *m_last_num_sim_insn;
 	unsigned *m_last_num_sim_winsn;
 	unsigned *m_num_decoded_insn; // number of instructions decoded by this shader core
@@ -1453,17 +1489,20 @@ struct shader_core_stats_pod {
 	unsigned gpgpu_n_tex_insn;
 	unsigned gpgpu_n_const_insn;
 	unsigned gpgpu_n_param_insn;
-	unsigned gpgpu_n_dcc_param_insn; //Po-Han DCC
+	unsigned gpgpu_n_child_param_insn; //Po-Han DCC
 	unsigned gpgpu_n_shmem_bkconflict;
 	unsigned gpgpu_n_cache_bkconflict;
 	int      gpgpu_n_intrawarp_mshr_merge;
 	unsigned gpgpu_n_cmem_portconflict;
 	unsigned gpu_stall_shd_mem_breakdown[N_MEM_STAGE_ACCESS_TYPE][N_MEM_STAGE_STALL_TYPE];
 	unsigned gpu_reg_bank_conflict_stalls;
-	unsigned *shader_cycle_distro;
-	unsigned *last_shader_cycle_distro;
+	unsigned long long *shader_cycle_distro;
+	unsigned long long *last_shader_cycle_distro;
 	unsigned *num_warps_issuable;
 	unsigned gpgpu_n_stall_shd_mem;
+
+	// bddream
+	unsigned gpgpu_n_ldst_unit_busy_stall;
 
 	//memory access classification
 	int gpgpu_n_mem_read_local;
@@ -1496,6 +1535,7 @@ class shader_core_stats : public shader_core_stats_pod {
 			shader_cycles=(unsigned long long *) calloc(config->num_shader(),sizeof(unsigned long long ));
 			m_num_sim_insn = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_num_sim_winsn = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
+			m_num_sim_winsn_child = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_last_num_sim_winsn = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_last_num_sim_insn = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_pipeline_duty_cycle=(float*) calloc(config->num_shader(),sizeof(float));
@@ -1530,8 +1570,8 @@ class shader_core_stats : public shader_core_stats_pod {
 			m_write_regfile_acesses= (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_non_rf_operands=(unsigned*) calloc(config->num_shader(),sizeof(unsigned));
 			m_n_diverge = (unsigned*) calloc(config->num_shader(),sizeof(unsigned));
-			shader_cycle_distro = (unsigned*) calloc(config->warp_size+3, sizeof(unsigned));
-			last_shader_cycle_distro = (unsigned*) calloc(m_config->warp_size+3, sizeof(unsigned));
+			shader_cycle_distro = (unsigned long long*) calloc(config->warp_size+3, sizeof(unsigned long long));
+			last_shader_cycle_distro = (unsigned long long*) calloc(m_config->warp_size+3, sizeof(unsigned long long));
 
 			n_simt_to_mem = (long *)calloc(config->num_shader(), sizeof(long));
 			n_mem_to_simt = (long *)calloc(config->num_shader(), sizeof(long));
@@ -1557,6 +1597,7 @@ class shader_core_stats : public shader_core_stats_pod {
 			delete m_incoming_traffic_stats; 
 			free(m_num_sim_insn); 
 			free(m_num_sim_winsn);
+			free(m_num_sim_winsn_child);
 			free(m_n_diverge); 
 			free(shader_cycle_distro);
 			free(last_shader_cycle_distro);
@@ -1571,6 +1612,7 @@ class shader_core_stats : public shader_core_stats_pod {
 		void visualizer_print( gzFile visualizer_file );
 
 		void print( FILE *fout ) const;
+		void dkc_print( FILE *fout ) const;
 
 		const std::vector< std::vector<unsigned> >& get_dynamic_warp_issue() const
 		{
@@ -1846,6 +1888,7 @@ class shader_core_ctx : public core_t {
 		//Andrew
 		ifetch_buffer_t &get_ifetch_buffer(){return m_inst_fetch_buffer;};
 		barrier_set_t &get_barrier_set(){return m_barriers;};
+		unsigned now_context_switching;
 
 	private:
 
@@ -1857,7 +1900,7 @@ class shader_core_ctx : public core_t {
 		}
 
 		int test_res_bus(int latency);
-		void init_warps(unsigned cta_id, unsigned start_thread, unsigned end_thread);
+		void init_warps(unsigned cta_id, unsigned start_thread, unsigned end_thread, bool child);
 		virtual void checkExecutionStatusAndUpdate(warp_inst_t &inst, unsigned t, unsigned tid);
 		address_type next_pc( int tid ) const;
 		void fetch();
@@ -1868,7 +1911,7 @@ class shader_core_ctx : public core_t {
 		friend class scheduler_unit; //this is needed to use private issue warp.
 		friend class TwoLevelScheduler;
 		friend class LooseRoundRobbinScheduler;
-		void issue_warp( register_set& warp, const warp_inst_t *pI, const active_mask_t &active_mask, unsigned warp_id );
+		void issue_warp( register_set& warp, const warp_inst_t *pI, const active_mask_t &active_mask, unsigned warp_id, bool is_child );
 		void func_exec_inst( warp_inst_t &inst );
 
 		// Returns numbers of addresses in translated_addrs
@@ -1944,6 +1987,8 @@ class shader_core_ctx : public core_t {
 		void release_shader_resource_1block(unsigned hw_ctaid, kernel_info_t & kernel);
 		int find_available_hwtid(unsigned int cta_size, bool occupy);
 		std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid; 
+		void context_switch_1_block();
+		bool tdq_full;
 	private:
 		unsigned int m_occupied_n_threads; 
 		unsigned int m_occupied_shmem; 
@@ -1968,8 +2013,10 @@ class shader_core_ctx : public core_t {
 						break;
 					}
 				}
-				if(warp_active)
+				if(warp_active){
 					m_stats->m_shader_warp_active_cycles[m_sid][warp_id]++;
+					total_active_warp++;
+				}
 			}
 		}
 };
@@ -2022,7 +2069,9 @@ class simt_core_cluster {
 		// dekline
 		shader_core_ctx **m_core;
 		unsigned m_cluster_id;
+		bool *context_switch_mode;
 		bool switching_ctas( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id );
+		bool able_to_switch( kernel_info_t &kernel_1, unsigned core, unsigned preempted_cta_id, unsigned global_cta_id );
 		bool core_can_issue_1block(unsigned core, kernel_info_t *kernel){return m_core[core]->can_issue_1block(*kernel);}
 
 	private:

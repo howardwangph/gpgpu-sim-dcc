@@ -215,13 +215,13 @@ private:
 struct CUstream_st {
 public:
     CUstream_st(); 
-    //bool empty();
-    inline bool empty(){
+    bool empty();
+/*    inline bool empty(){
        pthread_mutex_lock(&m_lock);
        bool empty = m_operations.empty();
        pthread_mutex_unlock(&m_lock);
        return empty;
-    }
+    }*/
     bool busy();
     void synchronize();
     void push( const stream_operation &op );
@@ -233,7 +233,7 @@ public:
     unsigned get_uid() const { return m_uid; }
 
     //Jin: support aggregated blocks
-    kernel_info_t * find_grid(function_info * entry);
+    kernel_info_t * find_grid(function_info * entry, kernel_info_t *parent_grid, unsigned parent_block_idx);
 
 private:
     unsigned m_uid;
@@ -261,10 +261,10 @@ public:
     void push( stream_operation op );
     bool operation(bool * sim);
     //Jin: support aggregated blocks
-    kernel_info_t * find_grid(function_info * entry);
+    kernel_info_t * find_grid(function_info * entry, kernel_info_t *parent_grid, unsigned parent_block_idx);
     unsigned stream_count();
     bool has_stream( CUstream_st *stream );
-    bool gpu_can_start_kernel();
+    unsigned gpu_can_start_kernel();
 private:
     void print_impl( FILE *fp);
 
@@ -274,7 +274,7 @@ private:
     std::map<unsigned,CUstream_st *> m_grid_id_to_stream;
     CUstream_st m_stream_zero;
     bool m_service_stream_zero;
-    pthread_mutex_t m_lock;
+    pthread_mutex_t stm_m_lock;
 };
 
 #endif

@@ -394,7 +394,7 @@ void ptx_thread_info::set_operand_value( const operand_info &dst, const ptx_reg_
 
 }
 
-void ptx_thread_info::set_operand_value( const operand_info &dst, const ptx_reg_t &data, unsigned type, ptx_thread_info *thread, const ptx_instruction *pI )
+void ptx_thread_info::set_operand_value( const operand_info &dst, const ptx_reg_t &data, unsigned type, ptx_thread_info *thread, const ptx_instruction *pI, int shfl_pval )
 {
    ptx_reg_t dstData;
    memory_space *mem = NULL;
@@ -415,12 +415,20 @@ void ptx_thread_info::set_operand_value( const operand_info &dst, const ptx_reg_
           ptx_reg_t setValue2;
           const symbol *name1 = dst.vec_symbol(0);
           const symbol *name2 = dst.vec_symbol(1);
+	  if (pI->get_opcode() == SHFL_OP)
+	  {
+			  // Handle predicate destination for shfl
+			  setValue2.pred = shfl_pval;
+	  }
+	  else
+	  {
 
           if ( (type==F16_TYPE)||(type==F32_TYPE)||(type==F64_TYPE)||(type==FF64_TYPE) ) {
              setValue2.f32 = (setValue.u64==0)?1.0f:0.0f;
           } else {
              setValue2.u32 = (setValue.u64==0)?0xFFFFFFFF:0;
           }
+	  }
 
           set_reg(name1,setValue);
           set_reg(name2,setValue2);
@@ -1341,7 +1349,65 @@ void bar_impl( const ptx_instruction *pIin, ptx_thread_info *thread )
    thread->m_last_dram_callback.instruction = pIin;
 }
 
-void bfe_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
+// Added by Dekline
+void bfe_impl( const ptx_instruction *pI, ptx_thread_info *thread )
+{
+	unsigned i_type = pI->get_type();
+	unsigned msb = (i_type == U32_TYPE || i_type == S32_TYPE) ? 31 : 63;
+
+	ptx_reg_t src1_data, src2_data, src3_data, data;
+
+	const operand_info &dst = pI->dst();
+	const operand_info &src1 = pI->src1();
+	const operand_info &src2 = pI->src2();
+	const operand_info &src3 = pI->src3(); 
+
+	src1_data = thread->get_operand_value(src1, dst, i_type, thread, 1);
+	src2_data = thread->get_operand_value(src2, dst, i_type, thread, 1);
+	src3_data = thread->get_operand_value(src3, dst, i_type, thread, 1);
+
+	unsigned sbit;
+	unsigned pos = src2_data.u32 & 0xFF;
+	unsigned len = src3_data.u32 & 0xFF;
+
+	if (i_type == U32_TYPE || i_type == U64_TYPE || len == 0) {
+		sbit = 0;
+	} else {
+		if(i_type==S32_TYPE)
+			sbit = (src1_data.s32 << MY_MIN_I(pos+len-1, msb)) & 1;
+		else if(i_type==S64_TYPE)
+			sbit = (src1_data.s64 << MY_MIN_I(pos+len-1, msb)) & 1;
+	}
+
+	switch (i_type) {
+		case U32_TYPE:
+			data.u32 = 0;
+			for (unsigned i = 0; i <= msb; ++i) {
+				data.u32 = (i<len && pos + i <= msb) ? (src1_data.u32 << pos+i) & 1 : sbit;
+			}
+			break;
+		case U64_TYPE:
+			data.u64 = 0;
+			for (unsigned i = 0; i <= msb; ++i) {
+				data.u64 = (i<len && pos + i <= msb) ? (src1_data.u64 << pos+i) & 1 : sbit;
+			}
+			break;
+		case S32_TYPE:
+			data.s32 = 0;
+			for (unsigned i = 0; i <= msb; ++i) {
+				data.s32 = (i<len && pos + i <= msb) ? (src1_data.s32 << pos+i) & 1 : sbit;
+			}
+			break;
+		case S64_TYPE:
+			data.s64 = 0;
+			for (unsigned i = 0; i <= msb; ++i) {
+				data.s64 = (i<len && pos + i <= msb) ? (src1_data.s64 << pos+i) & 1 : sbit;
+			}
+			break;
+	}
+
+	thread->set_operand_value(dst, data, i_type, thread, pI);
+}
 void bfi_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
 void bfind_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
 
@@ -2302,7 +2368,7 @@ void decode_space( memory_space_t &space, ptx_thread_info *thread, const operand
          space = whichspace(addr);
          switch ( space.get_type() ) {
 	 // Po-Han: dynamic child-thread consolidation
-	 case dcc_param_space:
+	 case child_param_space:
          case global_space: mem = thread->get_global_memory(); addr = generic_to_global(addr); break;
          case local_space:  mem = thread->m_local_mem; addr = generic_to_local(smid,hwtid,addr); break; 
          case shared_space: mem = thread->m_shared_mem; addr = generic_to_shared(smid,addr); break; 
@@ -3043,6 +3109,113 @@ void popc_impl( const ptx_instruction *pI, ptx_thread_info *thread )
 }
 void prefetch_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
 void prefetchu_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
+
+/*
+ * Add shfl instruction
+ * More details: http://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl
+ */
+void shfl_impl( const ptx_instruction *pI, ptx_thread_info *thread ) 
+{
+	static bool first_in_warp = true;
+	static std::list<ptx_thread_info*> threads_in_warp;
+	static std::map<int, unsigned> sourceA;
+	static std::map<int, unsigned> targetLane;
+	static unsigned last_tid;
+	
+	if( first_in_warp ) {
+		// Initialization
+		first_in_warp = false;
+		threads_in_warp.clear();
+		sourceA.clear();
+		targetLane.clear();
+		int offset = pI->warp_size() - 1;
+		while ( (offset >= 0) && !pI->active(offset) ) 
+			offset--;
+		assert( offset >= 0 );
+		last_tid = (thread->get_hw_tid() - (thread->get_hw_tid()%pI->warp_size())) + offset;
+	}
+
+	ptx_reg_t a, b, c;
+	const operand_info &dst  = pI->dst();
+	const operand_info &src1 = pI->src1();
+	const operand_info &src2 = pI->src2();
+	const operand_info &src3 = pI->src3();
+
+	unsigned i_type = pI->get_type();
+	if (i_type != B32_TYPE)
+	{
+		printf("Execution error: type mismatch with instruction shfl\n");
+		assert(0);
+	}
+	a = thread->get_operand_value(src1, dst, i_type, thread, 1);
+	b = thread->get_operand_value(src2, dst, i_type, thread, 1);
+	c = thread->get_operand_value(src3, dst, i_type, thread, 1);
+	
+	int lane_id = thread->get_hw_tid() % pI->warp_size();
+	int bval    = b.u32 & 0x1f;
+	int cval    = c.u32 & 0x1f;
+	int mask    = (c.u32 >> 8) & 0x1f;
+
+	sourceA[lane_id] = a.u32;
+
+	int maxLane = (lane_id & mask) | (cval & ((~mask) & 0x1f));
+	int minLane = (lane_id & mask);
+	int j, pval;
+	switch (pI->shfl_mode())
+	{
+	case UP_OPTION:
+		j = lane_id - bval;
+		pval = (j >= maxLane) & 1;
+		break;
+	case DOWN_OPTION:
+		j = lane_id + bval;
+		pval = (j <= maxLane) & 1;
+		break;
+	case BFLY_OPTION:
+		j = (lane_id ^ bval) & 0x1f;
+		pval = (j <= maxLane) & 1;
+		break;
+	case IDX_OPTION:
+		j = minLane | (bval & ((~mask) & 0x1f));
+		pval = (j <= maxLane) & 1;
+		break;
+	default:
+		printf("Execution error: operation mismatch with instruction shfl\n");
+		assert(0);
+		break;
+	}
+	if (!pval) j = lane_id;
+	targetLane[lane_id] = ((pval << 8) | j);
+
+    threads_in_warp.push_back(thread);
+
+	// Let the last thread do the things for the whole warp
+	if (thread->get_hw_tid() == last_tid)
+	{
+		for (std::list<ptx_thread_info*>::iterator t = threads_in_warp.begin(); t!=threads_in_warp.end(); ++t)
+		{
+			const operand_info &dst = pI->dst();
+			ptx_reg_t d;
+			std::map<int, unsigned>::iterator target_lane = targetLane.find((*t)->get_hw_tid() % pI->warp_size());
+			if (target_lane != targetLane.end())
+			{
+				pval = (target_lane->second >> 8) & 1;
+				// Target lane is composed of the first 5 bit
+				std::map<int, unsigned>::iterator target_source = sourceA.find(target_lane->second & 0x1f);
+				d.u32 = (target_source != sourceA.end()) ? target_source->second : (unsigned)-1;
+			}
+			else
+			{
+				// Undefined shfl
+				pval = 0;
+				d.u32 = (unsigned)-1;
+			}
+			(*t)->set_operand_value(dst, d, pI->get_type(), (*t), pI, pval);
+		}
+		first_in_warp = true;
+	}
+}
+
 void prmt_impl( const ptx_instruction *pI, ptx_thread_info *thread ) { inst_not_implemented(pI); }
 
 void rcp_impl( const ptx_instruction *pI, ptx_thread_info *thread ) 

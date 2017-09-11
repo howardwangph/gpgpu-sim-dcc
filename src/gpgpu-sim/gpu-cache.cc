@@ -988,6 +988,11 @@ read_only_cache::access( new_addr_type addr,
                          unsigned time,
                          std::list<cache_event> &events )
 {
+    extern bool g_perfect_constant_cache;
+    if( g_perfect_constant_cache ) {
+	enum cache_request_status s = HIT;
+	return s;
+    }
     assert( mf->get_data_size() <= m_config.get_line_sz());
     assert(m_config.m_write_policy == READ_ONLY);
     assert(!mf->get_is_write());
@@ -1002,12 +1007,18 @@ read_only_cache::access( new_addr_type addr,
         if(!miss_queue_full(0)){
             bool do_miss=false;
             send_read_request(addr, block_addr, cache_index, mf, time, do_miss, events, true, false);
-            if(do_miss)
+            if(do_miss) {
                 cache_status = MISS;
-            else
+//		printf("%s%u Cycle %u: Read_Only Cache miss\n", m_name.c_str(), m_tag_array->m_core_id, time);
+	    } else {
                 cache_status = RESERVATION_FAIL;
+		extern unsigned long long l1c_mshr_full;
+		l1c_mshr_full++;
+//		printf("%s%u Cycle %u: Read_Only Cache MSHR full\n", m_name.c_str(), m_tag_array->m_core_id, time);
+	    }
         }else{
             cache_status = RESERVATION_FAIL;
+//	    printf("%s%u Cycle %u: Read_Only Cache Miss Queue full\n", m_name.c_str(), m_tag_array->m_core_id, time);
         }
     }
 

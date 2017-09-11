@@ -227,7 +227,7 @@ struct memory_config {
    unsigned gpgpu_frfcfs_dram_sched_queue_size;
    unsigned gpgpu_dram_return_queue_size;
    enum dram_ctrl_t scheduler_type;
-   bool gpgpu_memlatency_stat;
+   int gpgpu_memlatency_stat;
    unsigned m_n_mem;
    unsigned m_n_sub_partition_per_memory_channel;
    unsigned m_n_mem_sub_partition;
@@ -314,6 +314,9 @@ public:
     unsigned num_shader() const { return m_shader_config.num_shader(); }
     unsigned num_cluster() const { return m_shader_config.n_simt_clusters; }
     unsigned get_max_concurrent_kernel() const { return max_concurrent_kernel; }
+    double core_freq;
+    double dram_freq;
+    memory_config m_memory_config;
 
 private:
     void init_clock_domains(void ); 
@@ -321,11 +324,11 @@ private:
 
     bool m_valid;
     shader_core_config m_shader_config;
-    memory_config m_memory_config;
+//    memory_config m_memory_config;
     // clock domains - frequency
-    double core_freq;
+//    double core_freq;
     double icnt_freq;
-    double dram_freq;
+//    double dram_freq;
     double l2_freq;
     double core_period;
     double icnt_period;
@@ -374,7 +377,7 @@ public:
    void set_prop( struct cudaDeviceProp *prop );
 
    void launch( kernel_info_t *kinfo );
-   bool can_start_kernel();
+   unsigned can_start_kernel();
    unsigned finished_kernel();
    void set_kernel_done( kernel_info_t *kernel );
 
@@ -398,9 +401,11 @@ public:
    unsigned max_cta_per_core() const;
    bool get_more_cta_left() const;
    kernel_info_t *select_kernel(unsigned, unsigned);
+   bool more_device_ctas_to_run();
 
    const gpgpu_sim_config &get_config() const { return m_config; }
    void gpu_print_stat(FILE * fout);
+   void gpu_print_stat_dkc(FILE * fout);
    void dump_pipeline( int mask, int s, int m ) const;
 
    //The next three functions added to be used by the functional simulation function
@@ -436,6 +441,7 @@ public:
 //		   printf("%d, , , \n", n);
                 }
         }
+	printf("m_last_issued_kernel = %d\n", m_last_issued_kernel);
     }
 
 
@@ -449,6 +455,7 @@ private:
    void shader_print_runtime_stat( FILE *fout );
    void shader_print_l1_miss_stat( FILE *fout ) const;
    void shader_print_cache_stats( FILE *fout ) const;
+   void shader_print_cache_stats_dkc( FILE *fout ) const;
    void shader_print_scheduler_stat( FILE* fout, bool print_dynamic_info ) const;
    void visualizer_printstat();
    void print_shader_cycle_distro( FILE *fout ) const;

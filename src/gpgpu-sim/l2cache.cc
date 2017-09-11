@@ -273,6 +273,12 @@ void memory_partition_unit::set_dram_power_stats(unsigned &n_cmd,
     m_dram->set_dram_power_stats(n_cmd, n_activity, n_nop, n_act, n_pre, n_rd, n_wr, n_req);
 }
 
+void memory_partition_unit::print_dkc( FILE *fp ) const
+{
+    m_dram->print_dkc(fp);
+    return;
+}
+
 void memory_partition_unit::print( FILE *fp ) const
 {
     fprintf(fp, "Memory Partition %u: \n", m_id); 

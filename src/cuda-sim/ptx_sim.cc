@@ -195,8 +195,9 @@ ptx_thread_info::ptx_thread_info( kernel_info_t &kernel )
    m_param_mem = NULL; //Po-Han DCC
 }
 
-void ptx_thread_info::set_param_mem( unsigned global_tid )
+unsigned long long ptx_thread_info::set_param_mem( unsigned global_tid )
 {
+    unsigned long long extra_latency = 0;
    extern bool g_dyn_child_thread_consolidation;
    extern bool g_dcc_kernel_param_onchip;
    if(g_dyn_child_thread_consolidation && m_kernel.is_child){
@@ -220,7 +221,7 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
 	    extern bool param_buffer_full; 
 	    param_buffer_usage -= kernel_param_usage;
 	    if(param_buffer_usage < 0) param_buffer_usage = 0;
-	    fprintf(stdout, "Clear an entry, param_buffer usage %lld", param_buffer_usage);
+	    fprintf(stdout, "KPM: Clear an entry, param_buffer usage %lld", param_buffer_usage);
 	    if(param_buffer_usage * 100 < g_max_param_buffer_size * g_param_buffer_thres_low){
 	       param_buffer_full = false;
 	       fprintf(stdout, ", <%u\%, turn-off full bit", g_param_buffer_thres_low);
@@ -235,16 +236,62 @@ void ptx_thread_info::set_param_mem( unsigned global_tid )
       // correct timing simulation on kernel parameters
       std::map<unsigned int, addr_t>::iterator it2;
       for( it2 = m_kernel.m_param_mem_base_map.begin(); it2 != m_kernel.m_param_mem_base_map.end(); it2++){
-	 if (global_tid < it->first) break;
+	 if (global_tid < it2->first) break;
       }
       if( it2 == m_kernel.m_param_mem_base_map.end() )
 	 it2--;
       m_param_memory_base = it2->second;
+
+      extern bool g_estimate_offchip_metadata_load_latency;
+      std::map<unsigned int, int>::iterator it3;
+      for( it3 = m_kernel.m_kernel_queue_entry_map.begin(); it3 != m_kernel.m_kernel_queue_entry_map.end(); it3++){
+	  if(global_tid == it3->first ){ //first thread of a new metadata
+//	      extern unsigned int block_scheduling_delay;
+	      extern unsigned int AVG_PARAM_RD_TIME;
+//	      extern unsigned int num_offchip_metadata;
+	      extern unsigned long long total_extra_metadata_latency;
+//	      block_scheduling_delay++;
+	      extra_latency++;
+#if 1
+	      if(g_estimate_offchip_metadata_load_latency){
+		  if(it3->second == -1){
+//		      block_scheduling_delay += AVG_PARAM_RD_TIME /*(unsigned int)avg_offchip_latency*/;
+		      extra_latency += AVG_PARAM_RD_TIME;
+//		      num_offchip_metadata++;
+		      total_extra_metadata_latency += AVG_PARAM_RD_TIME /*(unsigned long long)avg_offchip_latency*/;
+//		      printf("DKC: cycle %llu dispatch kernel with off-chip metadata, add %d latency\n", gpu_sim_cycle+gpu_tot_sim_cycle, AVG_PARAM_RD_TIME /*(unsigned int)avg_offchip_latency*/);
+		  }
+	      }
+#endif
+	  }
+#if 0
+	  if( (global_tid == it3->first - 1) || 
+		  ((it3->first > m_kernel.num_blocks() * m_kernel.threads_per_cta()) && global_tid == (m_kernel.num_blocks() * m_kernel.threads_per_cta() - 1)) ){
+	      //last thread of the current metadata
+	      extern bool *g_kernel_queue_entry_empty;
+	      extern unsigned int g_kernel_queue_entry_used;
+	      if(it3->second != -1){
+		  assert(g_kernel_queue_entry_empty[it3->second] == false);
+		  g_kernel_queue_entry_empty[it3->second] = true;
+		  g_kernel_queue_entry_used--;
+	      } else {
+		  extern unsigned long long total_num_offchip_metadata;
+		  if( total_num_offchip_metadata > 0 )
+		      total_num_offchip_metadata--;
+		  printf("DKC: reclaim an off-chip kernel metadata, %llu remaining\n", total_num_offchip_metadata);
+	      }
+	      printf("TDQ, %llu, %d, %d, D\n", gpu_sim_cycle+gpu_tot_sim_cycle, it3->second, g_kernel_queue_entry_used);
+	  } 
+#endif
+      }
    } else {
+      //bddream - DKPL
       m_param_mem = m_kernel.get_param_memory(m_agg_group_id); 
       // correct timing simulation on kernel parameters
       m_param_memory_base = m_kernel.get_param_memory_base(m_agg_group_id);
    }
+
+   return extra_latency;
 }
 
 const ptx_version &ptx_thread_info::get_ptx_version() const 
@@ -312,7 +359,8 @@ unsigned ptx_thread_info::get_builtin( int builtin_id, unsigned dim_mod )
    }
    case GRIDID_REG:
       return m_gridid;
-   case LANEID_REG: feature_not_implemented( "%laneid" ); return 0;
+   case LANEID_REG: 
+      return m_laneid; /*feature_not_implemented( "%laneid" ); return 0;*/
    case LANEMASK_EQ_REG: feature_not_implemented( "%lanemask_eq" ); return 0;
    case LANEMASK_LE_REG: feature_not_implemented( "%lanemask_le" ); return 0;
    case LANEMASK_LT_REG: feature_not_implemented( "%lanemask_lt" ); return 0;

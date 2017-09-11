@@ -431,6 +431,15 @@ class mem_fetch* dram_t::return_queue_top()
     return returnq->top();
 }
 
+void dram_t::print_dkc( FILE* simFile) const
+{
+    fprintf(simFile, "%d, %d, %d, ",
+	    bwutil,
+	    n_cmd,
+	    n_activity);
+
+    return;
+}
 void dram_t::print( FILE* simFile) const
 {
    unsigned i;

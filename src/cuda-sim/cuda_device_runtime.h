@@ -47,23 +47,26 @@ class dcc_kernel_distributor_t {
 	dim3 ctaid;
 	unsigned long long expected_launch_time;
 	unsigned int offset_base;
+	int kernel_queue_entry_id;
+	unsigned int onchip_metadata;
 };
 extern bool g_dyn_child_thread_consolidation;	
 extern unsigned g_dcc_timeout_threshold;
 extern unsigned g_dyn_child_thread_consolidation_version;
 extern bool g_restrict_parent_block_count;
+extern bool g_simultaneous_multikernel_within_SM;
 
 //Po-Han: hand-coded application ids for DCC
 typedef enum _application_id {
     BFS,
-    AMR,
+    MST,
     JOIN,
     SSSP,
     COLOR,
     MIS,
     PAGERANK,
     KMEANS,
-    BFS_RODINIA,
+    SP,
     BC,
     SPMV,
     BL
@@ -77,8 +80,11 @@ void gpgpusim_cuda_launchDeviceV2(const ptx_instruction * pI, ptx_thread_info * 
 void gpgpusim_cuda_streamCreateWithFlags(const ptx_instruction * pI, ptx_thread_info * thread, const function_info * target_func);
 void launch_all_device_kernels();
 void launch_one_device_kernel(bool no_more_kernel, kernel_info_t *fin_parent, ptx_thread_info *sync_parent_thread);
+void generate_one_consolidated_kernel(kernel_info_t *fin_parent, ptx_thread_info *sync_parent_thread);
 void try_launch_child_kernel();
-kernel_info_t * find_launched_grid(function_info * kernel_entry);
+kernel_info_t * find_launched_grid(function_info * kernel_entry, kernel_info_t *parent_kernel, unsigned parent_block_idx);
+//kernel_info_t * find_launched_grid(function_info * kernel_entry);
 
 void gpgpusim_cuda_deviceSynchronize(const ptx_instruction * pI, ptx_thread_info * thread, const function_info * target_func);
 bool merge_two_kernel_distributor_entry(dcc_kernel_distributor_t *kd_entry_1, dcc_kernel_distributor_t *kd_entry_2, bool ForceMerge, int target_size, bool &remaining);
+bool is_target_parent_kernel(kernel_info_t *kernel);
